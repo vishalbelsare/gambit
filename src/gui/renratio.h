@@ -1,9 +1,9 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/renratio.h
-// Declaration of wxSheet renderer for rational numbers
+// Declaration of wxGrid renderer/editor for rational numbers
 //
 // This program is free software; you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -20,58 +20,54 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef RENRATIO_H
-#define RENRATIO_H
+#ifndef GAMBIT_GUI_RENRATIO_H
+#define GAMBIT_GUI_RENRATIO_H
 
-#include "wx/sheet/sheet.h"     // the wxSheet widget
+#include <wx/grid.h>
 
-//
-// This class is based on the wxSheetCellStringRendererRefData implementation
-//
-class gbtRationalRendererRefData : public wxSheetCellRendererRefData {
+namespace Gambit::GUI {
+
+//!
+//! Renderer for payoff cells: draws values containing '/' as a stacked
+//! numerator/denominator fraction, everything else as plain text.
+//!
+class RationalCellRenderer : public wxGridCellStringRenderer {
 public:
-  gbtRationalRendererRefData(void) { }
-    
-  // draw the string
-  virtual void Draw(wxSheet& grid, const wxSheetCellAttr& attr,
-		    wxDC& dc, const wxRect& rect, 
-		    const wxSheetCoords& coords, bool isSelected);
+  RationalCellRenderer() = default;
 
-  // return the string extent
-  virtual wxSize GetBestSize(wxSheet& grid, const wxSheetCellAttr& attr,
-			     wxDC& dc, const wxSheetCoords& coords);
+  void Draw(wxGrid &grid, wxGridCellAttr &attr, wxDC &dc, const wxRect &rect, int row, int col,
+            bool isSelected) override;
+  wxSize GetBestSize(wxGrid &grid, wxGridCellAttr &attr, wxDC &dc, int row, int col) override;
 
-  void DoDraw(wxSheet& grid, const wxSheetCellAttr& attr,
-	      wxDC& dc, const wxRect& rect, 
-	      const wxSheetCoords& coords, bool isSelected);
+  wxGridCellRenderer *Clone() const override { return new RationalCellRenderer(); }
 
-  // set the text colours before drawing
-  void SetTextColoursAndFont(wxSheet& grid, const wxSheetCellAttr& attr,
-			     wxDC& dc, bool isSelected);
-
-  // calc the string extent for given string/font
-  wxSize DoGetBestSize(wxSheet& grid, const wxSheetCellAttr& attr, 
-		       wxDC& dc, const wxString& text);
-
-  bool Copy(const gbtRationalRendererRefData& other) 
-  { return wxSheetCellRendererRefData::Copy(other); }
-  DECLARE_SHEETOBJREFDATA_COPY_CLASS(gbtRationalRendererRefData, 
-				     wxSheetCellRendererRefData)
+private:
+  static void SetTextColoursAndFont(wxGrid &grid, const wxGridCellAttr &attr, wxDC &dc,
+                                    bool isSelected);
+  static wxSize DoGetBestSize(wxGrid &grid, const wxGridCellAttr &attr, wxDC &dc,
+                              const wxString &text);
 };
 
-class gbtRationalEditorRefData : public wxSheetCellTextEditorRefData {
+//!
+//! Editor for payoff cells: restricts input to digits, a single decimal
+//! point, and a leading minus sign.
+//!
+class RationalCellEditor final : public wxGridCellTextEditor {
 public:
-  gbtRationalEditorRefData(void) { }
+  RationalCellEditor() = default;
 
-  void CreateEditor(wxWindow *, wxWindowID, wxEvtHandler *, wxSheet *);
+  void Create(wxWindow *parent, wxWindowID id, wxEvtHandler *evtHandler) override;
+  bool IsAcceptedKey(wxKeyEvent &event) override;
+  void StartingKey(wxKeyEvent &event) override;
 
-  /// Override basic text editor behavior to restrict input
-  bool IsAcceptedKey(wxKeyEvent &);
-  void StartingKey(wxKeyEvent &);
+  /// Centers the (single-line) text control vertically within the cell
+  /// rect rather than stretching it to fill the full height, which pins
+  /// the text to the top on cells taller than one line.
+  void SetSize(const wxRect &rect) override;
 
-  bool Copy(const gbtRationalEditorRefData &other);
-  DECLARE_SHEETOBJREFDATA_COPY_CLASS(gbtRationalEditorRefData, 
-				     wxSheetCellTextEditorRefData)    
+  wxGridCellEditor *Clone() const override { return new RationalCellEditor(); }
 };
 
-#endif  // RENRATIO_H
+} // namespace Gambit::GUI
+
+#endif // GAMBIT_GUI_RENRATIO_H

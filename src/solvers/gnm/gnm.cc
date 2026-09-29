@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/tools/gnm/gnm.cc
+// FILE: src/solvers/gnm/gnm.cc
 // Compute Nash equilibria via the global Newton method
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,128 +20,104 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#include "gambit.h"
+#include <numeric>
+#include "games.h"
 #include "solvers/gnm/gnm.h"
 #include "solvers/gtracer/gtracer.h"
 
+using namespace Gambit;
 using namespace Gambit::gametracer;
 
-namespace Gambit {
-namespace Nash {
+namespace {
 
-MixedStrategyProfile<double>
-NashGNMStrategySolver::ToProfile(const Game &p_game,
-				 const cvector &p_pert)
+Nash::GNMStrategyResult Solve(const Game &p_game, const std::shared_ptr<gnmgame> &p_rep,
+                              const cvector &p_pert, double p_lambdaEnd, int p_steps,
+                              int p_localNewtonInterval, int p_localNewtonMaxits,
+                              Nash::StrategyCallbackType<double> p_onEquilibrium,
+                              Nash::GNMEventCallbackType p_onEvent, const CancelToken &p_cancel)
 {
-  MixedStrategyProfile<double> msp = p_game->NewMixedStrategyProfile(0.0);
-  for (int i = 1; i <= msp.MixedProfileLength(); i++) {
-    msp[i] = p_pert[i-1];
-  }
-  return msp;
-}
-
-List<MixedStrategyProfile<double> >
-NashGNMStrategySolver::Solve(const Game &p_game,
-			     shared_ptr<gnmgame> p_rep,
-			     const cvector &p_pert) const
-{
-  const int STEPS = 100;
   const double FUZZ = 1e-12;
-  const int LNMFREQ = 3;
-  const int LNMMAX = 10;
-  const double LAMBDAMIN = -10.0;
   const bool WOBBLE = false;
   const double THRESHOLD = 1e-2;
 
-  List<MixedStrategyProfile<double> > eqa;
-  
-  if (m_verbose) {
-    m_onEquilibrium->Render(ToProfile(p_game, p_pert), "pert");
+  if (p_lambdaEnd >= 0.0) {
+    throw std::out_of_range("Value of lambdaEnd must be negative");
   }
-  cvector norm_pert = p_pert / p_pert.norm(); 
-  cvector **answers;
-  int numEq = GNM(*p_rep, norm_pert, answers,
-		  STEPS, FUZZ, LNMFREQ, LNMMAX, LAMBDAMIN, WOBBLE, THRESHOLD,
-		  m_verbose);
-  for (int i = 0; i < numEq; i++) {
-    eqa.push_back(ToProfile(p_game, *answers[i]));
-    m_onEquilibrium->Render(eqa.back());
-    free(answers[i]);
+  const bool nonzero =
+      std::accumulate(p_pert.cbegin(), p_pert.cend(), false,
+                      [](bool accum, double value) { return accum || value != 0.0; });
+  if (!nonzero) {
+    throw UndefinedException("Perturbation vector must have at least one nonzero component.");
   }
-  free(answers);
-  return eqa;
+  std::list<MixedStrategyProfile<double>> eqa;
+  const auto perturbation = ToProfile(p_game, p_pert);
+  p_onEvent(Nash::GNMPerturbationEvent{.profile = perturbation});
+  cvector norm_pert = p_pert / p_pert.norm();
+  auto callback = [p_game, p_onEquilibrium, p_onEvent](const std::string &label,
+                                                       const cvector &sigma) {
+    const auto profile = ToProfile(p_game, sigma);
+    if (label == "NE") {
+      p_onEquilibrium(profile);
+    }
+    else if (label == "start") {
+      p_onEvent(Nash::GNMStartEvent{.profile = profile});
+    }
+    else {
+      p_onEvent(Nash::GNMStepEvent{.profile = profile, .lambda = std::stod(label)});
+    }
+  };
+  const GNMResult result =
+      GNM(*p_rep, norm_pert, p_steps, FUZZ, p_localNewtonInterval, p_localNewtonMaxits,
+          p_lambdaEnd, WOBBLE, THRESHOLD, callback, p_cancel);
+  p_onEvent(Nash::GNMTerminationEvent{.reason = result.reason, .message = result.message});
+  for (const auto &answer : result.equilibria) {
+    eqa.push_back(ToProfile(p_game, answer));
+  }
+  const bool success = result.reason == GNMTerminationReason::NoMoreBoundaries ||
+                       result.reason == GNMTerminationReason::NoNextBoundary ||
+                       result.reason == GNMTerminationReason::LambdaOutOfRange;
+  return {eqa, success, result.reason};
 }
 
-shared_ptr<gnmgame>
-NashGNMStrategySolver::BuildRepresentation(const Game &p_game) const
-{
-  if (p_game->IsAgg()) {
-    return new aggame(dynamic_cast<GameAggRep &>(*p_game));
-  }
-  else {
-    Rational maxPay = p_game->GetMaxPayoff();
-    Rational minPay = p_game->GetMinPayoff();
-    double scale = 1.0 / (maxPay - minPay);
+} // namespace
 
-    int *actions = new int[p_game->NumPlayers()];
-    int veclength = p_game->NumPlayers();
-    for (int pl = 1; pl <= p_game->NumPlayers(); pl++) {
-      actions[pl-1] = p_game->GetPlayer(pl)->NumStrategies();
-      veclength *= p_game->GetPlayer(pl)->NumStrategies();
-    }
-    cvector payoffs(veclength);
-  
-    shared_ptr<gnmgame> A = new nfgame(p_game->NumPlayers(), actions, payoffs);
-  
-    int *profile = new int[p_game->NumPlayers()];
-    for (StrategyProfileIterator iter(p_game); !iter.AtEnd(); iter++) {
-      for (int pl = 1; pl <= p_game->NumPlayers(); pl++) {
-        profile[pl-1] = (*iter)->GetStrategy(pl)->GetNumber() - 1;
-      }
+namespace Gambit::Nash {
 
-      for (int pl = 1; pl <= p_game->NumPlayers(); pl++) {
-        A->setPurePayoff(pl-1, profile,
-		       (double) ((*iter)->GetPayoff(pl) - minPay) *
-		       scale);
-      }
-    }
-    return A;
-  }
-}
- 
-List<MixedStrategyProfile<double> >
-NashGNMStrategySolver::Solve(const Game &p_game) const
+GNMStrategyResult GNMStrategySolve(const Game &p_game, double p_lambdaEnd, int p_steps,
+                                   int p_localNewtonInterval, int p_localNewtonMaxits,
+                                   StrategyCallbackType<double> p_onEquilibrium,
+                                   GNMEventCallbackType p_onEvent, const CancelToken &p_cancel)
 {
   if (!p_game->IsPerfectRecall()) {
-    throw UndefinedException("Computing equilibria of games with imperfect recall is not supported.");
+    throw UndefinedException(
+        "Computing equilibria of games with imperfect recall is not supported.");
   }
-
-  Gambit::shared_ptr<gnmgame> A = BuildRepresentation(p_game);
-  cvector g(A->getNumActions()); 
-  g[0] = 1.0;
-  for (int i = 1; i < A->getNumActions(); i++) {
-    g[i] = 0.0;
+  const std::shared_ptr<gnmgame> A = BuildGame(p_game, true);
+  MixedStrategyProfile<double> pert = p_game->NewMixedStrategyProfile(0.0);
+  for (const auto &player : p_game->GetPlayers()) {
+    for (const auto &strategy : player->GetStrategies()) {
+      pert[strategy] = 0.0;
+    }
   }
-  return Solve(p_game, A, g);
+  for (auto player : p_game->GetPlayers()) {
+    pert[player->GetStrategies().front()] = 1.0;
+  }
+  return Solve(p_game, A, ToPerturbation(pert), p_lambdaEnd, p_steps, p_localNewtonInterval,
+               p_localNewtonMaxits, p_onEquilibrium, p_onEvent, p_cancel);
 }
 
-List<MixedStrategyProfile<double> >
-NashGNMStrategySolver::Solve(const Game &p_game,
-			     const MixedStrategyProfile<double> &p_pert) const
+GNMStrategyResult GNMStrategySolve(const MixedStrategyProfile<double> &p_pert, double p_lambdaEnd,
+                                   int p_steps, int p_localNewtonInterval, int p_localNewtonMaxits,
+                                   StrategyCallbackType<double> p_onEquilibrium,
+                                   GNMEventCallbackType p_onEvent, const CancelToken &p_cancel)
 {
-  if (!p_game->IsPerfectRecall()) {
-    throw UndefinedException("Computing equilibria of games with imperfect recall is not supported.");
+  if (!p_pert.GetGame()->IsPerfectRecall()) {
+    throw UndefinedException(
+        "Computing equilibria of games with imperfect recall is not supported.");
   }
-
-  List<MixedStrategyProfile<double> > solutions;
-  Gambit::shared_ptr<gnmgame> A = BuildRepresentation(p_game);
-  cvector g(A->getNumActions());
-  for (int i = 0; i < A->getNumActions(); i++) {
-    g[i] = p_pert[i+1];
-  }
-  g /= g.norm();
-  return Solve(p_game, A, g);
+  const std::shared_ptr<gnmgame> A = BuildGame(p_pert.GetGame(), true);
+  return Solve(p_pert.GetGame(), A, ToPerturbation(p_pert), p_lambdaEnd, p_steps,
+               p_localNewtonInterval, p_localNewtonMaxits, p_onEquilibrium, p_onEvent, p_cancel);
 }
 
-}  // end namespace Gambit::Nash
-}  // end namespace Gambit
+} // end namespace Gambit::Nash

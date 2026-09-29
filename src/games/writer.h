@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gambit/writer.h
+// FILE: src/games/writer.h
 // Classes for writing out games to various formats
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,60 +20,65 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef LIBGAMBIT_WRITER_H
-#define LIBGAMBIT_WRITER_H
+#ifndef GAMBIT_GAMES_WRITER_H
+#define GAMBIT_GAMES_WRITER_H
 
 #include <string>
 
 namespace Gambit {
 
-///
-/// Abstract base class for objects that write games to various formats
-///
-class GameWriter  {
-public:
-  ///
-  /// Convert the game to a string-based representation
-  ///
-  virtual std::string Write(const Game &) const = 0;
-};
+/// @brief Render text as an explicit double-quoted string, escaping any double-quotes
+///        in the text with a backslash
+inline std::string QuoteString(const std::string &s)
+{
+  std::ostringstream ss;
+  ss << std::quoted(s);
+  return ss.str();
+}
+
+/// @brief Render a list of objects as a space-separated list of elements, delimited
+///        by curly braces on either side
+/// @param[in] p_container  The container over which to iterate
+/// @param[in] p_renderer   A callable which returns a string representing each item
+/// @param[in] p_commas     Use comma as delimiter between items (default is no)
+/// @param[in] p_braces     Whether to include curly braces on either side of the list
+/// @returns  The formatted list as a string following the conventions of Gambit savefiles.
+template <class C, class T>
+std::string FormatList(const C &p_container, T p_renderer, bool p_commas = false,
+                       bool p_braces = true)
+{
+  std::string s, delim;
+  if (p_braces) {
+    s = "{";
+    delim = " ";
+  }
+  for (auto element : p_container) {
+    s += delim + p_renderer(element);
+    if (p_commas) {
+      delim = ", ";
+    }
+    else {
+      delim = " ";
+    }
+  }
+  if (p_braces) {
+    s += " }";
+  }
+  return s;
+}
 
 ///
-/// Format the strategic representation of a game to HTML tables.
+/// Convert the game to HTML, selecting the row and column player.
 ///
-class HTMLGameWriter : public GameWriter {
-public:
-  ///
-  /// Convert the game to HTML, with player 1 on the rows and player 2
-  /// on the columns.
-  ///
-  virtual std::string Write(const Game &p_game) const
-  { return Write(p_game, 1, 2); }
-
-  ///
-  /// Convert the game to HTML, selecting the row and column player numbers.
-  ///
-  std::string Write(const Game &p_game, int p_rowPlayer, int p_colPlayer) const;
-};
+std::string WriteHTMLFile(const Game &p_game, const GamePlayer &p_rowPlayer,
+                          const GamePlayer &p_colPlayer);
 
 ///
 /// Format the strategic representation of a game to LaTeX sgame style
 ///
-class LaTeXGameWriter : public GameWriter {
-public:
-  ///
-  /// Convert the game to LaTeX, with player 1 on the rows and player 2
-  /// on the columns.
-  ///
-  virtual std::string Write(const Game &p_game) const
-  { return Write(p_game, 1, 2); }
-
-  ///
-  /// Convert the game to LaTeX, selecting the row and column player numbers.
-  ///
-  std::string Write(const Game &p_game, int p_rowPlayer, int p_colPlayer) const;
-};
+std::string WriteLaTeXFile(const Game &p_game, const GamePlayer &p_rowPlayer,
+                           const GamePlayer &p_colPlayer);
 
 } // end namespace Gambit
 
-#endif // LIBGAMBIT_WRITER_H
+#endif // GAMBIT_GAMES_WRITER_H

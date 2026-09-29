@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/efgpanel.h
 // Main viewing panel for extensive forms
@@ -20,42 +20,41 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef EFGPANEL_H
-#define EFGPANEL_H
+#ifndef GAMBIT_GUI_EFGPANEL_H
+#define GAMBIT_GUI_EFGPANEL_H
 
 #include "gamedoc.h"
 
 class wxPrintout;
-class gbtEfgDisplay;
 
-class gbtEfgPanel : public wxPanel, public gbtGameView {
-private:
-  gbtEfgDisplay *m_treeWindow;
-  wxWindow *m_dominanceToolbar, *m_playerToolbar;
+namespace Gambit::GUI {
+class EfgDisplay;
 
-  // Overriding gbtGameView members
-  void OnUpdate(void) { }
+class EfgPanel final : public wxPanel, public GameView {
+  EfgDisplay *m_treeWindow;
+
+  // Overriding GameView members
+  void OnUpdate() override {}
 
   /// @name Command event handlers
   //@{
-  void OnToolsDominance(wxCommandEvent &);
   void OnViewZoomIn(wxCommandEvent &);
   void OnViewZoomOut(wxCommandEvent &);
   void OnViewZoom100(wxCommandEvent &);
   void OnViewZoomFit(wxCommandEvent &);
   //@}
-    
+
 public:
-  gbtEfgPanel(wxWindow *p_parent, gbtGameDocument *p_doc);
-  virtual ~gbtEfgPanel() { }
+  EfgPanel(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc);
+  ~EfgPanel() override = default;
 
   /// @name Exporting/printing graphics
   //@{
   /// Creates a printout object of the game as currently displayed
-  wxPrintout *GetPrintout(void);
+  wxPrintout *GetPrintout();
   /// Creates a bitmap of the game as currently displayed
   bool GetBitmap(wxBitmap &, int marginX, int marginY);
-  /// Outputs the game as currently displayed to a SVG file
+  /// Outputs the game as currently displayed to SVG file
   void GetSVG(const wxString &p_filename, int marginX, int marginY);
   /// Prints the game as currently displayed, centered on the DC
   void RenderGame(wxDC &p_dc, int marginX, int marginY);
@@ -63,6 +62,6 @@ public:
 
   DECLARE_EVENT_TABLE()
 };
+} // namespace Gambit::GUI
 
-#endif // EFGPANEL_H
-
+#endif // GAMBIT_GUI_EFGPANEL_H

@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/nfgtable.h
 // Declaration of control to display/edit strategic game tables
@@ -20,126 +20,472 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef NFGTABLE_H
-#define NFGTABLE_H
+#ifndef GAMBIT_GUI_NFGTABLE_H
+#define GAMBIT_GUI_NFGTABLE_H
 
-class gbtGameDocument;
-class gbtNfgPanel;
+#include <wx/grid.h>
+
+#include "games/stratpure.h"
+
+// Forward-declared rather than requiring <wx/print.h>: TableWidget::GetPrintout() only
+// ever needs the pointer type here, and not every .cc file including this header (e.g.
+// nfgheadergrid.cc) has a reason to pull in the printing headers itself.
+class wxPrintout;
+
+namespace Gambit::GUI {
+class GameDocument;
+class NfgPanel;
 
 //!
-//! This is a panel which manages three wxSheet instances: one which
+//! This class handles some common overriding of wxGrid behavior common to the grids used
+//! in the strategic game display (nfgtable.cc's TableGridBase, nfgheadergrid.cc's
+//! RowPlayerGrid/ColPlayerGrid, nfgpayoffgrid.cc's PayoffGrid) -- shared here, rather than
+//! file-local to one of them, since it's a base class used across all three .cc files.
+//!
+class TableGridBase : public wxGrid {
+  void OnSelectCell(wxGridEvent &p_event) { p_event.Skip(); }
+
+protected:
+  /// Shows the editor on one click; overridden by the header grids to edit strategies
+  /// instead (or do nothing, if the strategic form is read-only).
+  virtual void OnCellLeftClick(wxGridEvent &p_event)
+  {
+    SetGridCursor(p_event.GetRow(), p_event.GetCol());
+    EnableCellEditControl();
+    p_event.Skip(false);
+  }
+
+  /// Suppresses the built-in selection highlight and cursor rectangle by default, since
+  /// most of the grids in this display have no use for a range selection at all. The
+  /// payoff grid overrides this to allow selecting several contingencies at once, to act
+  /// on together (e.g. merging them into one outcome).
+  virtual void OnRangeSelecting(wxGridRangeSelectEvent &p_event) { p_event.Veto(); }
+
+public:
+  explicit TableGridBase(wxWindow *p_parent, wxWindowID p_id = wxID_ANY) : wxGrid(p_parent, p_id)
+  {
+    SetCellHighlightPenWidth(0);
+    SetCellHighlightROPenWidth(0);
+    SetRowLabelSize(0);
+    SetColLabelSize(0);
+
+    Bind(wxEVT_GRID_RANGE_SELECTING, &TableGridBase::OnRangeSelecting, this);
+    Bind(wxEVT_GRID_SELECT_CELL, &TableGridBase::OnSelectCell, this);
+    Bind(wxEVT_GRID_CELL_LEFT_CLICK, &TableGridBase::OnCellLeftClick, this);
+  }
+};
+
+class StrategicTableLayout {
+  std::shared_ptr<GameDocument> m_doc;
+  std::vector<int> m_rowPlayers;
+  std::vector<int> m_colPlayers;
+
+  static int NumStrategies(const StrategySupportProfile &profile, int player)
+  {
+    return profile.GetStrategies(profile.GetGame()->GetPlayer(player)).size();
+  }
+
+  static GameStrategy LookupStrategy(const StrategySupportProfile &profile, int player,
+                                     int strategy)
+  {
+    auto strategies = profile.GetStrategies(profile.GetGame()->GetPlayer(player));
+    return *std::next(strategies.begin(), strategy - 1);
+  }
+
+public:
+  explicit StrategicTableLayout(const std::shared_ptr<GameDocument> &doc) : m_doc(doc)
+  {
+    if (m_doc->GetGame()->NumPlayers() >= 1) {
+      m_rowPlayers.push_back(1);
+    }
+    if (m_doc->GetGame()->NumPlayers() >= 2) {
+      m_colPlayers.push_back(2);
+    }
+    for (int pl = 3; pl <= m_doc->GetGame()->NumPlayers(); ++pl) {
+      m_rowPlayers.push_back(pl);
+    }
+  }
+
+  std::shared_ptr<GameDocument> GetDocument() const { return m_doc; }
+
+  /// Returns the number of players assigned to the rows
+  int NumRowPlayers() const { return m_rowPlayers.size(); }
+
+  /// Returns the index'th player assigned to the rows (1=slowest incrementing)
+  int GetRowPlayer(int index) const { return m_rowPlayers[index - 1]; }
+
+  /// Returns the number of players assigned to the columns
+  int NumColPlayers() const { return m_colPlayers.size(); }
+
+  /// Returns the index'th player assigned to the columns (1=slowest)
+  int GetColPlayer(int index) const { return m_colPlayers[index - 1]; }
+
+  void ReconcilePlayers()
+  {
+    const int maxPlayer = static_cast<int>(m_doc->GetGame()->NumPlayers());
+
+    std::erase_if(m_rowPlayers, [maxPlayer](int pl) { return pl > maxPlayer; });
+    std::erase_if(m_colPlayers, [maxPlayer](int pl) { return pl > maxPlayer; });
+
+    for (int pl = 1; pl <= maxPlayer; ++pl) {
+      if (!contains(m_rowPlayers, pl) && !contains(m_colPlayers, pl)) {
+        m_rowPlayers.push_back(pl);
+      }
+    }
+  }
+
+  void SetRowPlayer(int index, int pl)
+  {
+    std::erase(m_colPlayers, pl);
+    std::erase(m_rowPlayers, pl);
+
+    index = std::max(1, index);
+    index = std::min(index, static_cast<int>(m_rowPlayers.size()) + 1);
+
+    auto it = m_rowPlayers.begin();
+    std::advance(it, index - 1);
+    m_rowPlayers.insert(it, pl);
+  }
+
+  void SetColPlayer(int index, int pl)
+  {
+    std::erase(m_rowPlayers, pl);
+    std::erase(m_colPlayers, pl);
+
+    index = std::max(1, index);
+    index = std::min(index, static_cast<int>(m_colPlayers.size()) + 1);
+
+    auto it = m_colPlayers.begin();
+    std::advance(it, index - 1);
+    m_colPlayers.insert(it, pl);
+  }
+
+  int NumRowContingencies() const
+  {
+    int ncont = 1;
+    const StrategySupportProfile &support = m_doc->GetNfgSupport();
+    for (int i = 1; i <= NumRowPlayers(); ++i) {
+      ncont *= NumStrategies(support, GetRowPlayer(i));
+    }
+    return ncont;
+  }
+
+  int NumColContingencies() const
+  {
+    int ncont = 1;
+    const StrategySupportProfile &support = m_doc->GetNfgSupport();
+    for (int i = 1; i <= NumColPlayers(); ++i) {
+      ncont *= NumStrategies(support, GetColPlayer(i));
+    }
+    return ncont;
+  }
+
+  int NumRowsSpanned(int index) const
+  {
+    int ncont = 1;
+    const StrategySupportProfile &support = m_doc->GetNfgSupport();
+    for (int i = index + 1; i <= NumRowPlayers(); ++i) {
+      ncont *= NumStrategies(support, GetRowPlayer(i));
+    }
+    return ncont;
+  }
+
+  int NumColsSpanned(int index) const
+  {
+    int ncont = 1;
+    const StrategySupportProfile &support = m_doc->GetNfgSupport();
+    for (int i = index + 1; i <= NumColPlayers(); ++i) {
+      ncont *= NumStrategies(support, GetColPlayer(i));
+    }
+    return ncont;
+  }
+
+  int RowToStrategy(int player, int row) const
+  {
+    const int strat = row / NumRowsSpanned(player);
+    return (strat % NumStrategies(m_doc->GetNfgSupport(), GetRowPlayer(player)) + 1);
+  }
+
+  int ColToStrategy(int player, int col) const
+  {
+    const int strat = col / m_doc->GetGame()->NumPlayers() / NumColsSpanned(player);
+    return (strat % NumStrategies(m_doc->GetNfgSupport(), GetColPlayer(player)) + 1);
+  }
+
+  int GetRowHeaderRowCount() const { return NumRowContingencies(); }
+  int GetRowHeaderColCount() const { return NumRowPlayers(); }
+
+  int GetColHeaderRowCount() const { return NumColPlayers(); }
+  int GetColHeaderColCount() const
+  {
+    return NumColContingencies() * m_doc->GetGame()->NumPlayers();
+  }
+
+  int GetPayoffRowCount() const { return NumRowContingencies(); }
+  int GetPayoffColCount() const { return NumColContingencies() * m_doc->GetGame()->NumPlayers(); }
+
+  int GetRowHeaderPlayer(int headerCol) const { return GetRowPlayer(headerCol + 1); }
+
+  int GetColHeaderPlayer(int headerRow) const { return GetColPlayer(headerRow + 1); }
+
+  int GetRowHeaderStrategy(int headerCol, int headerRow) const
+  {
+    return RowToStrategy(headerCol + 1, headerRow);
+  }
+
+  int GetColHeaderStrategy(int headerRow, int headerCol) const
+  {
+    return ColToStrategy(headerRow + 1, headerCol);
+  }
+
+  int GetRowHeaderRowSpan(int headerCol) const { return NumRowsSpanned(headerCol + 1); }
+
+  int GetColHeaderColSpan(int headerRow) const
+  {
+    return NumColsSpanned(headerRow + 1) * m_doc->GetGame()->NumPlayers();
+  }
+
+  int GetPayoffPlayerForColumn(int payoffCol) const
+  {
+    const int index = payoffCol % m_doc->GetGame()->NumPlayers() + 1;
+    if (index <= NumRowPlayers()) {
+      return GetRowPlayer(index);
+    }
+    else {
+      return GetColPlayer(index - NumRowPlayers());
+    }
+  }
+
+  PureStrategyProfile CellToProfile(int row, int col) const
+  {
+    const StrategySupportProfile &support = m_doc->GetNfgSupport();
+
+    const PureStrategyProfile profile = m_doc->GetGame()->NewPureStrategyProfile();
+    for (int i = 1; i <= NumRowPlayers(); ++i) {
+      const int player = GetRowPlayer(i);
+      profile->SetStrategy(LookupStrategy(support, player, RowToStrategy(i, row)));
+    }
+
+    for (int i = 1; i <= NumColPlayers(); ++i) {
+      const int player = GetColPlayer(i);
+      profile->SetStrategy(LookupStrategy(support, player, ColToStrategy(i, col)));
+    }
+
+    return profile;
+  }
+
+  PureStrategyProfile GetPayoffProfile(int row, int col) const { return CellToProfile(row, col); }
+};
+
+//!
+//! This is a panel which manages three wxGrid instances: one which
 //! contains the payoffs of the strategic form, and two which handle
 //! the display of row and column labels
 //!
-class gbtTableWidget : public wxPanel {
-private:
-  gbtGameDocument *m_doc;
-  gbtNfgPanel *m_nfgPanel;
-  wxSheet *m_payoffSheet, *m_rowSheet, *m_colSheet;
+class TableWidget final : public wxPanel {
+  std::shared_ptr<GameDocument> m_doc;
+  NfgPanel *m_nfgPanel;
+  wxGrid *m_payoffGrid, *m_rowGrid, *m_colGrid;
 
-  Gambit::Array<int> m_rowPlayers, m_colPlayers;
+  std::shared_ptr<StrategicTableLayout> m_layout;
+
+  /// The outcome currently under the mouse in the payoff grid, or the null handle if
+  /// none (including when the cell under the mouse has the game's null outcome).
+  GameOutcome m_hoverOutcome;
 
   /// @name Event handlers
   //@{
-  /// Called when row label sheet is scrolled
-  void OnRowSheetScroll(wxSheetEvent &);
-  /// Called when column label sheet is scrolled
-  void OnColSheetScroll(wxSheetEvent &);
-  /// Called when payoff sheet is scrolled
-  void OnPayoffScroll(wxSheetEvent &);
+  /// Called when the payoff grid is scrolled; keeps row/col header grids in sync
+  void OnPayoffScroll(wxScrollWinEvent &);
+  /// Called when the payoff grid is scrolled by mouse wheel
+  void OnPayoffMouseWheel(wxMouseEvent &);
 
-  /// Called when row label sheet row is resized
-  void OnRowSheetRow(wxSheetEvent &);
-  /// Called when payoff sheet row is resized
-  void OnPayoffRow(wxSheetEvent &);
+  /// Called when row header grid row is resized
+  void OnRowGridRowSize(wxGridSizeEvent &);
+  /// Called when payoff grid row is resized
+  void OnPayoffGridRowSize(wxGridSizeEvent &);
 
-  /// Called when col label sheet column is resized
-  void OnColSheetColumn(wxSheetEvent &);
-  /// Called when payoff sheet column is resized
-  void OnPayoffColumn(wxSheetEvent &);
+  /// Called when column header grid column is resized
+  void OnColGridColSize(wxGridSizeEvent &);
+  /// Called when payoff grid column is resized
+  void OnPayoffGridColSize(wxGridSizeEvent &);
 
-  /// Called when row label sheet column is resized
-  void OnRowSheetColumn(wxSheetEvent &);
-  /// Called when column label sheet row is resized
-  void OnColSheetRow(wxSheetEvent &);
+  /// Called when row header grid's own column is resized (affects pane width)
+  void OnRowGridColSize(wxGridSizeEvent &);
+  /// Called when column header grid's own row is resized (affects pane height)
+  void OnColGridRowSize(wxGridSizeEvent &);
 
   /// Called when editing begins in any cell
-  void OnBeginEdit(wxSheetEvent &);
+  void OnBeginEdit(wxGridEvent &);
+  void ReconcilePlayers();
+  void UpdatePayoffPanel();
+  void UpdateLabelPanelMargins();
+  void UpdateLabelPanels();
   //@}
 
-public:
-  gbtTableWidget(gbtNfgPanel *p_parent, wxWindowID p_id,
-		 gbtGameDocument *p_doc);
-
-  /// @name Coordination of sheets
+  /// @name Constructing/updating the row/col/payoff grids
   //@{
-  /// Scroll row and column label sheets
-  void SetGridOrigin(int x, int y);
+  /// Constructs m_payoffGrid (defined in nfgpayoffgrid.cc, alongside PayoffGrid) and
+  /// m_rowGrid/m_colGrid (defined in nfgheadergrid.cc, alongside RowPlayerGrid/
+  /// ColPlayerGrid) -- called from the constructor body rather than its initializer
+  /// list, since those grid classes' complete types aren't visible here.
+  void InitPayoffGrid();
+  void InitHeaderGrids();
+  /// These call down to PayoffGrid::OnUpdate()/RowPlayerGrid::OnUpdate()/
+  /// ColPlayerGrid::OnUpdate() (via a dynamic_cast back to the concrete type), for the
+  /// same reason InitPayoffGrid()/InitHeaderGrids() above exist.
+  void UpdatePayoffGrid();
+  void UpdateRowGrid();
+  void UpdateColGrid();
+  //@}
 
+  int GetRowPaneWidth() const;
+  int GetColPaneHeight() const;
+  void UpdateLabelPanelSizes();
+  void SyncScrollFromPayoff();
+
+public:
+  TableWidget(NfgPanel *p_parent, wxWindowID p_id, const std::shared_ptr<GameDocument> &p_doc);
+
+  /// @name Coordination of grids
+  //@{
   /// Synchronize with document state
-  void OnUpdate(void);
+  void OnUpdate();
 
   /// Post any pending edits
-  void PostPendingChanges(void);
+  void PostPendingChanges();
 
   /// Are we showing dominance indicators or not?
-  bool ShowDominance(void) const;
+  bool ShowDominance() const;
+  bool IsRowPlayerPlacementNoOp(int p_index, int p_player) const;
+  bool IsColPlayerPlacementNoOp(int p_index, int p_player) const;
   //@}
 
   /// @name View state
   //@{
   /// Returns the number of players assigned to the rows
-  int NumRowPlayers(void) const { return m_rowPlayers.Length(); }
+  int NumRowPlayers() const { return m_layout->NumRowPlayers(); }
 
   /// Returns the index'th player assigned to the rows (1=slowest incrementing)
-  int GetRowPlayer(int index) const { return m_rowPlayers[index]; }
+  int GetRowPlayer(int index) const { return m_layout->GetRowPlayer(index); }
 
   /// Sets the index'th row player (1=slowest, n+1=fastest)
   void SetRowPlayer(int index, int pl);
 
   /// Returns the number of row contingencies (i.e., rows in the table)
-  int NumRowContingencies(void) const;
+  int NumRowContingencies() const { return m_layout->NumRowContingencies(); }
 
   /// Returns the number of rows spanned by strategy of row player index
-  int NumRowsSpanned(int index) const;
+  int NumRowsSpanned(int index) const { return m_layout->NumRowsSpanned(index); }
 
   /// Returns the strategy index for row player 'player' corresponding to 'row'
-  int RowToStrategy(int player, int row) const;
+  int RowToStrategy(int player, int row) const { return m_layout->RowToStrategy(player, row); }
 
   /// Returns the number of players assigned to the columns
-  int NumColPlayers(void) const { return m_colPlayers.Length(); }
+  int NumColPlayers() const { return m_layout->NumColPlayers(); }
 
   /// Returns the index'th player assigned to the columns (1=slowest)
-  int GetColPlayer(int index) const { return m_colPlayers[index]; }
+  int GetColPlayer(int index) const { return m_layout->GetColPlayer(index); }
 
   /// Sets the index'th column player (1=slowest, n+1=fastest)
   void SetColPlayer(int index, int pl);
 
-  /// Returns the number of column contingencies 
+  /// Returns the number of column contingencies
   /// (Note that each column contingency corresponds to #players cols!)
-  int NumColContingencies(void) const;
+  int NumColContingencies() const { return m_layout->NumColContingencies(); }
 
   /// Returns the number of columns spanned by strategy of column player index
-  int NumColsSpanned(int index) const;
+  int NumColsSpanned(int index) const { return m_layout->NumColsSpanned(index); }
 
   /// Returns the strategy index for row player 'player' corresponding to 'row'
-  int ColToStrategy(int player, int row) const;
+  int ColToStrategy(int player, int row) const { return m_layout->ColToStrategy(player, row); }
 
   /// Returns the strategy profile corresponding to a cell
-  Gambit::PureStrategyProfile CellToProfile(const wxSheetCoords &) const;
+  PureStrategyProfile CellToProfile(int row, int col) const
+  {
+    return m_layout->CellToProfile(row, col);
+  }
   //@}
+
+  //@{
+  // Header-pane dimensions
+  int GetRowHeaderRowCount() const { return m_layout->GetRowHeaderRowCount(); }
+  int GetRowHeaderColCount() const { return m_layout->GetRowHeaderColCount(); }
+
+  int GetColHeaderRowCount() const { return m_layout->GetColHeaderRowCount(); }
+  int GetColHeaderColCount() const { return m_layout->GetColHeaderColCount(); }
+
+  // Payoff-pane dimensions
+  int GetPayoffRowCount() const { return m_layout->GetPayoffRowCount(); }
+  int GetPayoffColCount() const { return m_layout->GetPayoffColCount(); }
+
+  // Header-pane player mapping
+  int GetRowHeaderPlayer(int headerCol) const { return m_layout->GetRowHeaderPlayer(headerCol); }
+  int GetColHeaderPlayer(int headerRow) const { return m_layout->GetColHeaderPlayer(headerRow); }
+
+  // Header-pane strategy mapping
+  int GetRowHeaderStrategy(int headerCol, int headerRow) const
+  {
+    return m_layout->GetRowHeaderStrategy(headerCol, headerRow);
+  }
+
+  int GetColHeaderStrategy(int headerRow, int headerCol) const
+  {
+    return m_layout->GetColHeaderStrategy(headerRow, headerCol);
+  }
+
+  // Header-pane span mapping
+  int GetRowHeaderRowSpan(int headerCol) const { return m_layout->GetRowHeaderRowSpan(headerCol); }
+
+  int GetColHeaderColSpan(int headerRow) const { return m_layout->GetColHeaderColSpan(headerRow); }
+
+  // Payoff-pane mapping helpers
+  int GetPayoffPlayerForColumn(int payoffCol) const
+  {
+    return m_layout->GetPayoffPlayerForColumn(payoffCol);
+  }
+
+  GameStrategy GetStrategyByPlayerAndIndex(int player, int strategy) const;
+
+  PureStrategyProfile GetPayoffProfile(int row, int col) const { return CellToProfile(row, col); }
+
+  GamePlayer GetPayoffPlayer(int payoffCol) const;
+  int GetPayoffColumnsPerContingency() const;
+  bool IsPayoffStrategyDominated(int row, int col, bool strict) const;
+
+  /// Sets the outcome to highlight in the payoff grid (every cell sharing it), e.g. as
+  /// the mouse moves over the grid; pass the null handle (or the game's null outcome) to
+  /// clear the highlight. Repaints the payoff grid if the highlighted outcome changes.
+  void SetHoverOutcome(const GameOutcome &p_outcome);
+  /// Whether the given cell's outcome is the one currently set by SetHoverOutcome.
+  bool IsPayoffCellHighlighted(int row, int col) const;
+
+  //@}
+
+  bool IsReadOnly() const;
+  wxColour GetPlayerColor(int player) const;
+  const StrategySupportProfile &GetSupport() const { return m_doc->GetNfgSupport(); }
+  std::shared_ptr<GameDocument> GetDocument() const { return m_doc; }
+
+  bool IsRowHeaderStrategyDominated(int headerCol, int headerRow, bool strict) const;
+  bool IsColHeaderStrategyDominated(int headerRow, int headerCol, bool strict) const;
 
   /// @name Exporting/printing graphics
   //@{
   /// Creates a printout object of the game as currently displayed
-  wxPrintout *GetPrintout(void);
+  wxPrintout *GetPrintout();
   /// Creates a bitmap of the game as currently displayed
   bool GetBitmap(wxBitmap &, int marginX, int marginY);
   /// Outputs the game as currently displayed to a SVG file
   void GetSVG(const wxString &p_filename, int marginX, int marginY);
   /// Prints the game as currently displayed, centered on the DC
   void RenderGame(wxDC &p_dc, int marginX, int marginY);
-  //@}
-};
 
-#endif  // NFGTABLE_H
+  void SetPayoffCellValue(int row, int col, const wxString &value);
+  //@}
+
+  /// Opens the "Edit strategies" dialog for `player`, committing any changes made.
+  void EditStrategies(int player);
+};
+} // namespace Gambit::GUI
+#endif // GAMBIT_GUI_NFGTABLE_H

@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dlabout.h
 // Declaration of "about" dialog
@@ -20,15 +20,15 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef DLABOUT_H
-#define DLABOUT_H
+#ifndef GAMBIT_GUI_DLABOUT_H
+#define GAMBIT_GUI_DLABOUT_H
 
-class gbtAboutDialog : public wxDialog {
+namespace Gambit::GUI {
+class AboutDialog final : public wxDialog {
 public:
-  gbtAboutDialog(wxWindow *p_parent);
-  virtual ~gbtAboutDialog() { }
+  explicit AboutDialog(wxWindow *p_parent);
+  ~AboutDialog() override = default;
 };
+} // namespace Gambit::GUI
 
-#endif  // DLABOUT_H
-
-
+#endif // GAMBIT_GUI_DLABOUT_H

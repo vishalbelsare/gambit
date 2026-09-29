@@ -1,0 +1,497 @@
+import io
+import os
+import shutil
+import subprocess
+import tempfile
+from importlib.resources import as_file, files
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+import pygambit as gbt
+
+# Prefer a co-located repo checkout's catalog (editable/dev installs) over any packaged
+# catalog_data. A prior non-editable install in the same environment can leave a stale
+# catalog_data directory in site-packages that nothing else would clean up; checking the repo
+# path first means it's never even consulted when a checkout is present (gambit#920).
+_repo_catalog = Path(__file__).parent.parent.parent / "catalog" / "games"
+_CATALOG_RESOURCE = (
+    _repo_catalog if _repo_catalog.is_dir() else files("pygambit") / "catalog_data"
+)
+
+READERS = {
+    ".nfg": gbt.read_nfg,
+    ".efg": gbt.read_efg,
+}
+
+
+def generate_openspiel(game_name: str, params: dict | None = None) -> gbt.Game:
+    """
+    Generate a game using the OpenSpiel library.
+
+    Parameters
+    ----------
+    game_name : str
+        The short name of the OpenSpiel game (e.g. ``"matrix_rps"``,
+        ``"tiny_hanabi"``). Passed directly to ``pyspiel.load_game``.
+    params : dict, optional
+        Game parameters forwarded to ``pyspiel.load_game``
+        (e.g. ``{"players": 2, "coins": 3, "fields": 2}`` for ``"blotto"``).
+        See the `OpenSpiel game list
+        <https://openspiel.readthedocs.io/en/latest/games.html>`_ for
+        available parameters per game.
+
+    Returns
+    -------
+    gbt.Game
+        The generated game.
+
+    Raises
+    ------
+    ImportError
+        If ``open_spiel`` is not installed.
+    ValueError
+        If the game's dynamics type is not supported for export, or if the
+        format exporter raises an error for this specific game.
+    Other exceptions from ``pyspiel.load_game`` propagate directly.
+        For example, ``pyspiel.SpielError`` is raised for unknown game names
+        or invalid/missing parameters.
+    """
+    try:
+        import pyspiel
+        from open_spiel.python.algorithms.gambit import export_gambit
+    except ImportError as exc:
+        raise ImportError(
+            "open_spiel is required to load OpenSpiel games. "
+            "Install it with: pip install open_spiel"
+        ) from exc
+
+    # Let pyspiel's own exceptions propagate unchanged — they already carry
+    # informative messages ("Unknown game '...'", "Unknown parameter '...'", etc.)
+    game = pyspiel.load_game(game_name, params or {})
+
+    dynamics = game.get_type().dynamics
+
+    # OpenSpiel's SEQUENTIAL corresponds to extensive-form (tree) games in Gambit;
+    # SIMULTANEOUS corresponds to normal-form (strategic-form) games.
+    if dynamics == pyspiel.GameType.Dynamics.SEQUENTIAL:
+        try:
+            efg_str = export_gambit(game)
+        except Exception as exc:
+            raise ValueError(
+                f"OpenSpiel game '{game_name}' could not be exported to EFG format: {exc}"
+            ) from exc
+        return gbt.read_efg(io.StringIO(efg_str))
+
+    elif dynamics == pyspiel.GameType.Dynamics.SIMULTANEOUS:
+        try:
+            nfg_str = pyspiel.game_to_nfg_string(game)
+        except Exception as exc:
+            raise ValueError(
+                f"OpenSpiel game '{game_name}' could not be exported to NFG format: {exc}"
+            ) from exc
+        return gbt.read_nfg(io.StringIO(nfg_str))
+
+    else:
+        raise ValueError(
+            f"OpenSpiel game '{game_name}' has unsupported dynamics type "
+            f"'{dynamics}' and cannot be exported to Gambit format."
+        )
+
+
+def generate_gamut(
+    game_class: str,
+    params: dict | None = None,
+    gamut_jar: Path | str | None = None,
+) -> gbt.Game:
+    """
+    Generate a game using the GAMUT game generator.
+
+    GAMUT (http://gamut.stanford.edu) is a Java-based suite of parameterised
+    game generators. This function calls GAMUT as an external process and
+    returns the resulting game as a :class:`~pygambit.Game` object.
+
+    Parameters
+    ----------
+    game_class : str
+        The GAMUT game class name (e.g. ``"RandomGame"``, ``"CovariantGame"``).
+        See the `GAMUT documentation <http://gamut.stanford.edu/documentation.htm>`_
+        for available game classes and their parameters.
+    params : dict, optional
+        Parameters forwarded to GAMUT as command-line flags. Each key becomes
+        ``-key``.  Values are handled as follows:
+
+        - ``True`` → flag with no value token
+          (e.g. ``{"normalize": True}`` → ``-normalize``)
+        - list or tuple → space-separated tokens
+          (e.g. ``{"actions": [3, 3]}`` → ``-actions 3 3``)
+        - anything else → single token
+          (e.g. ``{"players": 2}`` → ``-players 2``)
+
+        Multi-word GAMUT flags use underscores:
+        ``{"min_payoff": 0, "max_payoff": 100}``.
+    gamut_jar : pathlib.Path or str, optional
+        Path to ``gamut.jar``. If omitted, the ``GAMUT_JAR`` environment
+        variable is used. Raises :class:`FileNotFoundError` if neither is
+        supplied.
+
+    Returns
+    -------
+    Game
+        The generated game.
+
+    Raises
+    ------
+    RuntimeError
+        If ``java`` is not found on the system PATH.
+    FileNotFoundError
+        If ``gamut.jar`` cannot be located.
+    ValueError
+        If GAMUT exits with a non-zero return code (e.g. invalid game class
+        or parameters).
+    """
+    if shutil.which("java") is None:
+        raise RuntimeError(
+            "Java is required to run GAMUT. "
+            "Install Java and ensure 'java' is on your PATH."
+        )
+    if gamut_jar is None:
+        env_jar = os.environ.get("GAMUT_JAR")
+        if env_jar is None:
+            raise FileNotFoundError(
+                "gamut.jar not found. Provide the path via the 'gamut_jar' argument "
+                "or set the GAMUT_JAR environment variable. "
+                "Download GAMUT from http://gamut.stanford.edu/."
+            )
+        gamut_jar = Path(env_jar).expanduser()
+    else:
+        gamut_jar = Path(gamut_jar).expanduser()
+    if not gamut_jar.is_file():
+        raise FileNotFoundError(f"gamut.jar not found at {gamut_jar}")
+
+    cmd = ["java", "-jar", str(gamut_jar), "-g", game_class, "-output", "GambitOutput"]
+    if params:
+        for key, value in params.items():
+            cmd.append(f"-{key}")
+            if value is True:
+                pass  # boolean flags like -normalize, -int_payoffs take no value token
+            elif isinstance(value, (list, tuple)):
+                cmd.extend(str(v) for v in value)
+            else:
+                cmd.append(str(value))
+
+    with tempfile.NamedTemporaryFile(suffix=".nfg", delete=False) as tmp:
+        out_path = Path(tmp.name)
+    try:
+        cmd.extend(["-f", str(out_path)])
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise ValueError(
+                f"GAMUT failed for game class '{game_class}': "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
+        return gbt.read_nfg(str(out_path))
+    finally:
+        out_path.unlink(missing_ok=True)
+
+
+_GAMUT_GAMES = [
+    {"Class": "ArmsRace",
+     "Description": "Arms race with cost and demand functions chosen by players.",
+     "Players": "n"},
+    {"Class": "BattleOfTheSexes",
+     "Description": "Coordination game where players prefer to meet but disagree on the venue.",
+     "Players": "2"},
+    {"Class": "BertrandOligopoly",
+     "Description": "Bertrand oligopoly with arbitrary cost and demand functions.",
+     "Players": "n"},
+    {"Class": "BidirectionalLEG",
+     "Description": "Bidirectional local-effect game on a specified graph.",
+     "Players": "n"},
+    {"Class": "Chicken",
+     "Description": "Classic 2x2 Chicken game.",
+     "Players": "2"},
+    {"Class": "CollaborationGame",
+     "Description": "Game where all players choosing the same action yields the highest payoffs.",
+     "Players": "n"},
+    {"Class": "CongestionGame",
+     "Description": "Congestion game where payoffs depend on how many players share facilities.",
+     "Players": "n"},
+    {"Class": "CoordinationGame",
+     "Description": "Pure coordination game rewarding matching action choices.",
+     "Players": "n"},
+    {"Class": "CournotDuopoly",
+     "Description": "Cournot duopoly with arbitrary cost and inverse demand functions.",
+     "Players": "2"},
+    {"Class": "CovariantGame",
+     "Description": "Game with payoffs whose cross-player correlation is set by a parameter r.",
+     "Players": "n"},
+    {"Class": "DispersionGame",
+     "Description": "Game where dispersed action choices are rewarded.",
+     "Players": "n"},
+    {"Class": "GrabTheDollar",
+     "Description": "Simultaneous competition to claim a prize first.",
+     "Players": "2"},
+    {"Class": "GreedyGame",
+     "Description": "Players each choose a subset from a set; payoffs depend on overlap.",
+     "Players": "2"},
+    {"Class": "GuessThirdsAve",
+     "Description": "Players guess a number trying to reach 2/3 of the average.",
+     "Players": "n"},
+    {"Class": "HawkAndDove",
+     "Description": "Classic 2x2 Hawk and Dove game.",
+     "Players": "2"},
+    {"Class": "LocationGame",
+     "Description": "Hotelling-style two-player location game on a street.",
+     "Players": "2"},
+    {"Class": "MajorityVoting",
+     "Description": "Majority voting game with arbitrary candidate utilities.",
+     "Players": "n"},
+    {"Class": "MatchingPennies",
+     "Description": "Classic 2x2 Matching Pennies game.",
+     "Players": "2"},
+    {"Class": "MinimumEffortGame",
+     "Description": "Payoffs depend on the minimum effort exerted across all players.",
+     "Players": "n"},
+    {"Class": "NPlayerChicken",
+     "Description": "N-player Chicken game with cooperation costs and collective rewards.",
+     "Players": "n"},
+    {"Class": "NPlayerPrisonersDilemma",
+     "Description": "N-player Prisoner's Dilemma with parameterised payoff functions.",
+     "Players": "n"},
+    {"Class": "PolymatrixGame",
+     "Description": "Polymatrix game formed by two-player edge games on a graph.",
+     "Players": "n"},
+    {"Class": "PrisonersDilemma",
+     "Description": "Classic 2x2 Prisoner's Dilemma.",
+     "Players": "2"},
+    {"Class": "RandomCompoundGame",
+     "Description": "Compound game whose payoffs are sums of random 2x2 sub-games.",
+     "Players": "n"},
+    {"Class": "RandomGame",
+     "Description": "Game with payoffs drawn uniformly at random.",
+     "Players": "n"},
+    {"Class": "RandomGraphicalGame",
+     "Description": "Random graphical game on a specified graph.",
+     "Players": "n"},
+    {"Class": "RandomLEG",
+     "Description": "Random local-effect game on a specified graph.",
+     "Players": "n"},
+    {"Class": "RandomZeroSum",
+     "Description": "Two-player zero-sum game with random payoffs.",
+     "Players": "2"},
+    {"Class": "RockPaperScissors",
+     "Description": "Classic Rock, Paper, Scissors game.",
+     "Players": "2"},
+    {"Class": "ShapleyGame",
+     "Description": "Shapley's original game; no stable equilibrium under replicator dynamics.",
+     "Players": "2"},
+    {"Class": "SimpleInspectionGame",
+     "Description": "Inspection game where players choose from different-sized subsets.",
+     "Players": "2"},
+    {"Class": "TravelersDilemma",
+     "Description": "Players claim a value; the lowest claim "
+                    "wins a reward, others receive a penalty.",
+     "Players": "n"},
+    {"Class": "TwoByTwoGame",
+     "Description": "2x2 game of a specified type per Rapoport's classification (type in 1-85).",
+     "Players": "2"},
+    {"Class": "UniformLEG",
+     "Description": "Local-effect game where all edges share the same local-effect function.",
+     "Players": "n"},
+    {"Class": "WarOfAttrition",
+     "Description": "Players choose concession times; payoffs "
+                    "depend on valuations and decrements.",
+     "Players": "2"},
+]
+
+
+def gamut_games() -> pd.DataFrame:
+    """
+    Return a DataFrame listing all 35 GAMUT game classes.
+
+    Each row describes one game class that can be passed to
+    :func:`generate_gamut` as the ``game_class`` argument.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns:
+
+        - ``"Class"``: the game class name to pass to :func:`generate_gamut`
+        - ``"Description"``: a short description of the game family
+        - ``"Players"``: ``"2"`` for two-player only, ``"n"`` for n-player
+    """
+    return pd.DataFrame.from_records(_GAMUT_GAMES, columns=["Class", "Description", "Players"])
+
+
+def load(slug: str) -> gbt.Game:
+    """
+    Load a game from the package catalog.
+
+    Parameters
+    ----------
+    slug : str
+        The slug of the game to load.
+
+    Returns
+    -------
+    gbt.Game
+        The loaded game.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the game does not exist in the catalog.
+    """
+    slug = str(Path(slug)).replace("\\", "/")
+
+    # Try to load from file
+    for suffix, reader in READERS.items():
+        resource_path = _CATALOG_RESOURCE / f"{slug}{suffix}"
+        if resource_path.is_file():
+            with as_file(resource_path) as path:
+                return reader(str(path))
+
+    # Raise error if game does not exist
+    raise FileNotFoundError(f"No catalog entry called {slug}")
+
+
+def games(
+    n_actions: int | None = None,
+    n_contingencies: int | None = None,
+    n_infosets: int | None = None,
+    is_const_sum: bool | None = None,
+    is_perfect_recall: bool | None = None,
+    is_tree: bool | None = None,
+    min_payoff: float | None = None,
+    max_payoff: float | None = None,
+    n_nodes: int | None = None,
+    n_outcomes: int | None = None,
+    n_players: int | None = None,
+    n_strategies: int | None = None,
+    include_descriptions: bool = False,
+) -> pd.DataFrame:
+    """
+    List games available in the package catalog.
+
+    Most arguments are treated as filters on the
+    attributes of the Game objects.
+
+    Parameters
+    ----------
+    n_actions: int, optional
+        The number of actions in the game. Only extensive games are returned.
+    n_contingencies: int, optional
+        The number of contingencies in the game.
+    n_infosets: int, optional
+        The number of information sets in the game. Only extensive games are returned.
+    is_const_sum: bool, optional
+        Whether the game is constant-sum.
+    is_perfect_recall: bool, optional
+        Whether the game has perfect recall.
+    is_tree: bool, optional
+        Whether the game is an extensive game (a tree).
+    min_payoff: float, optional
+        The minimum payoff in the game. Games returned have `min_payoff >= value`.
+    max_payoff: float, optional
+        The maximum payoff in the game. Games returned have `max_payoff <= value`.
+    n_nodes: int, optional
+        The number of nodes in the game. Only extensive games are returned.
+    n_outcomes: int, optional
+        The number of outcomes in the game.
+    n_players: int, optional
+        The number of players in the game.
+    n_strategies: int, optional
+        The number of pure strategies in the game.
+    include_descriptions: bool, optional
+        Whether to include the description of each game in the returned DataFrame.
+        Defaults to False.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame with columns "Game" and "Title", where "Game" is the slug to load the game.
+        If `include_descriptions=True`, the DataFrame will also include a "Description" column.
+    """
+    records: list[dict[str, Any]] = []
+
+    def check_filters(game: gbt.Game) -> bool:
+        if n_actions is not None:
+            if not isinstance(game, gbt.ExtensiveGame):
+                return False
+            n_game_actions = sum(
+                len(game.get_actions(gbt.H.path(*history.actions)))
+                for player in game.players
+                for history in game.get_infosets(player)
+            )
+            if n_game_actions != n_actions:
+                return False
+        if n_contingencies is not None and len(game.contingencies) != n_contingencies:
+            return False
+        if n_infosets is not None:
+            if not isinstance(game, gbt.ExtensiveGame):
+                return False
+            if sum(len(game.get_infosets(p)) for p in game.players) != n_infosets:
+                return False
+        if is_const_sum is not None and game.is_const_sum != is_const_sum:
+            return False
+        if is_perfect_recall is not None and game.is_perfect_recall != is_perfect_recall:
+            return False
+        if is_tree is not None and isinstance(game, gbt.ExtensiveGame) != is_tree:
+            return False
+        if min_payoff is not None and game.min_payoff < min_payoff:
+            return False
+        if max_payoff is not None and game.max_payoff > max_payoff:
+            return False
+        if n_nodes is not None:
+            if not isinstance(game, gbt.ExtensiveGame):
+                return False
+            if len(game.get_histories(gbt.H.after())) != n_nodes:
+                return False
+        if n_outcomes is not None and len(game.get_outcomes()) != n_outcomes:
+            return False
+        if n_players is not None and len(game.players) != n_players:
+            return False
+        total_strategies = sum(len(game.get_strategies(p)) for p in game.players)
+        return not (n_strategies is not None and total_strategies != n_strategies)
+
+    def append_record(
+        slug: str,
+        game: gbt.Game,
+    ) -> None:
+        record = {
+            "Game": slug,
+            "Title": game.title,
+        }
+        if include_descriptions:
+            record["Description"] = game.description
+            ext = "efg" if isinstance(game, gbt.ExtensiveGame) else "nfg"
+            record["Download"] = f":download:`{slug}.{ext} <../games/{slug}.{ext}>`"
+            record["Format"] = ext
+        records.append(record)
+
+    # Add all the games stored as EFG/NFG files.
+    # Collect paths matching each supported extension, sort together to preserve
+    # a consistent alphabetical order, then load using the known reader.
+    for resource_path in sorted(
+        path
+        for suffix in READERS
+        for path in _CATALOG_RESOURCE.rglob(f"*{suffix}")
+        if path.is_file()
+    ):
+        reader = READERS[resource_path.suffix]
+        rel_path = resource_path.relative_to(_CATALOG_RESOURCE)
+        slug = rel_path.with_suffix("").as_posix()
+
+        with as_file(resource_path) as path:
+            game = reader(str(path))
+            if check_filters(game):
+                append_record(slug, game)
+
+    if include_descriptions:
+        return pd.DataFrame.from_records(
+            records, columns=["Game", "Title", "Description", "Download", "Format"]
+        )
+    return pd.DataFrame.from_records(records, columns=["Game", "Title"])

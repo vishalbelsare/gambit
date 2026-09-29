@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gambit/nash/simpdiv.h
+// FILE: src/solvers/simpdiv/simpdiv.h
 // Compute Nash equilibria via simplicial subdivision on the normal form
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,63 +20,63 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_NASH_SIMPDIV_H
-#define GAMBIT_NASH_SIMPDIV_H
+#ifndef GAMBIT_SOLVERS_SIMPDIV_SIMPDIV_H
+#define GAMBIT_SOLVERS_SIMPDIV_SIMPDIV_H
 
-#include "games/nash.h"
+#include <optional>
+#include <variant>
+#include "solvers/nash.h"
 
-namespace Gambit {
-namespace Nash {
-  
+namespace Gambit::Nash {
+
+struct SimpdivStartEvent {
+  const MixedStrategyProfile<Rational> &profile;
+};
+
+struct SimpdivRefinementEvent {
+  const MixedStrategyProfile<Rational> &profile;
+  Rational gridSize;
+  Rational regret;
+};
+
+using SimpdivEvent = std::variant<SimpdivStartEvent, SimpdivRefinementEvent>;
+using SimpdivEventCallbackType = std::function<void(const SimpdivEvent &)>;
+
+inline void NullSimpdivEventCallback(const SimpdivEvent &) {}
+
+///
+/// Returns the mixed strategy profile in which each player plays their
+/// first strategy with probability one.
+///
+/// This is the default starting point for SimpdivStrategySolve() when no
+/// other starting profile is specified.  It is a not-unreasonable default in
+/// that it starts with a very coarse grid and, if the game has an
+/// equilibrium in pure strategies, or in mixed strategies with small
+/// denominators, it will find it quickly.  Starting with a strategy profile
+/// with a smaller denominator can lead to a long initial search before
+/// reaching a candidate neighborhood for an equilibrium.
+///
+MixedStrategyProfile<Rational> SimpdivDefaultStart(const Game &p_game);
+
+/// @brief The result of computing a Nash equilibrium via simplicial subdivision
+struct SimpdivStrategyResult {
+  std::optional<MixedStrategyProfile<Rational>> equilibrium;
+  bool success{true};
+};
+
 ///
 /// This is a simplicial subdivision algorithm with restart, for finding
 /// mixed strategy solutions to general finite n-person games.  It is based on
-/// van Der Laan, Talman and van Der Heyden, Math in Oper Res, 1987.
+/// van Der Laan, Talman and van Der Heyden, Math of Oper Res, 1987.
 ///
-class NashSimpdivStrategySolver : public StrategySolver<Rational> {
-public:
-  NashSimpdivStrategySolver(int p_gridResize = 2, int p_leashLength = 0,
-			    bool p_verbose = false,
-			    shared_ptr<StrategyProfileRenderer<Rational> > p_onEquilibrium = 0)
-    : StrategySolver<Rational>(p_onEquilibrium),
-      m_gridResize(p_gridResize),
-      m_leashLength((p_leashLength > 0) ? p_leashLength : 32000),
-      m_verbose(p_verbose)
-  { }
-  virtual ~NashSimpdivStrategySolver() { }
+SimpdivStrategyResult SimpdivStrategySolve(
+    const MixedStrategyProfile<Rational> &p_start,
+    const Rational &p_maxregret = Rational(1, 10000000), int p_gridResize = 2,
+    int p_leashLength = 0,
+    StrategyCallbackType<Rational> p_onEquilibrium = NullStrategyCallback<Rational>,
+    SimpdivEventCallbackType p_onEvent = NullSimpdivEventCallback,
+    const CancelToken &p_cancel = CancelToken());
 
-  List<MixedStrategyProfile<Rational> > Solve(const MixedStrategyProfile<Rational> &p_start) const;
-  List<MixedStrategyProfile<Rational> > Solve(const Game &p_game) const;
+} // end namespace Gambit::Nash
 
-
-private:
-  int m_gridResize, m_leashLength;
-  bool m_verbose;
-
-  class State {
-  public:
-    int t, ibar;
-    Rational d, pay, maxz, bestz;
-    
-    State(void) : t(0), ibar(1), bestz(1.0e30) { }
-    Rational getlabel(MixedStrategyProfile<Rational> &yy, Array<int> &, 
-		      PVector<Rational> &);
-  };
-
-  Rational Simplex(MixedStrategyProfile<Rational> &, const Rational &d) const;
-  void update(State &, RectArray<int> &, RectArray<int> &, PVector<Rational> &,
-	      const PVector<int> &, int j, int i) const;
-  void getY(State &, MixedStrategyProfile<Rational> &x, PVector<Rational> &, 
-	    const PVector<int> &, const PVector<int> &, 
-	    const PVector<Rational> &, const RectArray<int> &, int k) const;
-  void getnexty(State &, 
-		MixedStrategyProfile<Rational> &x, const RectArray<int> &,
-		const PVector<int> &, int i) const;
-  int get_c(int j, int h, int nstrats, const PVector<int> &) const;
-  int get_b(int j, int h, int nstrats, const PVector<int> &) const;
-};
-
-}  // end namespace Gambit::Nash
-}  // end namespace Gambit
-
-#endif  // GAMBIT_NASH_SIMPDIV_H
+#endif // GAMBIT_SOLVERS_SIMPDIV_SIMPDIV_H

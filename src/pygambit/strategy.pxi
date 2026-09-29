@@ -1,0 +1,164 @@
+#
+# This file is part of Gambit
+# Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
+#
+# FILE: src/pygambit/strategy.pxi
+# Cython wrapper for strategies
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+#
+
+@cython.cclass
+class StrategyBehavior:
+    """A read-only, map-like view of the actions prescribed by a reduced strategy.
+
+    The keys of the mapping are Histories identifying the information sets of the
+    strategy's player at which the strategy prescribes an action; an unreachable
+    information set is not a key. The corresponding values are the labels of the
+    prescribed actions. Iteration yields the keys in the player's information set
+    order.
+
+    .. versionadded:: 17.0.0
+    """
+    _game = cython.declare(Game)
+    _player_label = cython.declare(str)
+    _strategy_label = cython.declare(str)
+
+    def __init__(self, *args, **kwargs) -> None:
+        raise ValueError("Cannot create a StrategyBehavior outside a Game.")
+
+    @staticmethod
+    @cython.cfunc
+    def wrap(game: Game, player_label: str, strategy_label: str) -> StrategyBehavior:
+        obj: StrategyBehavior = StrategyBehavior.__new__(StrategyBehavior)
+        obj._game = game
+        obj._player_label = player_label
+        obj._strategy_label = strategy_label
+        return obj
+
+    def __repr__(self) -> str:
+        return (
+            f"StrategyBehavior(player='{self._player_label}', "
+            f"strategy='{self._strategy_label}')"
+        )
+
+    @property
+    def player(self) -> str:
+        """The label of the player to which the strategy belongs."""
+        return self._player_label
+
+    @property
+    def strategy(self) -> str:
+        """The label of the strategy of which this is the behavior."""
+        return self._strategy_label
+
+    def _action_at(self, node: Node) -> str | None:
+        """The label of the action prescribed by the strategy at node's information
+        set, or None if unreachable."""
+        handle = self._game._resolve_strategy(
+            self._player_label, self._strategy_label, "StrategyBehavior"
+        )
+        action: c_GameAction = handle.deref().GetAction(cython.cast(Node, node)._infoset_handle())
+        if not action:
+            return None
+        return action.deref().GetLabel().decode("utf-8")
+
+    def _resolve_key(self, key: Selector) -> Node:
+        """Resolve `key` to a node at the information set at which the player has
+        the move."""
+        if not isinstance(key, Selector):
+            raise TypeError(
+                f"StrategyBehavior key must be Selector, not {key.__class__.__name__}"
+            )
+        resolved_node = cython.cast(ExtensiveGame, self._game)._resolve_infoset(
+            key, "StrategyBehavior", "key"
+        )
+        if resolved_node.player != self._player_label:
+            raise ValueError(
+                f"Player '{self._player_label}' does not have the move at {resolved_node}."
+            )
+        return resolved_node
+
+    def __getitem__(self, key: Selector) -> str:
+        """Return the label of the action prescribed at the information set `key`
+        resolves to.
+
+        Parameters
+        ----------
+        key : Selector
+            An `H`-built expression resolving to a single node belonging to the
+            information set to look up.
+
+        Raises
+        ------
+        TypeError
+            If `key` is not a ``Selector``.
+        KeyError
+            If the strategy prescribes no action at the information set.
+        ValueError
+            If the information set belongs to a different player, or `key`
+            resolves to a terminal node or a chance event.
+        """
+        node = self._resolve_key(key)
+        action = self._action_at(node)
+        if action is None:
+            raise KeyError(
+                f"Strategy '{self._strategy_label}' prescribes no action at {node}."
+            )
+        return action
+
+    def get(self, key: Selector, default: typing.Any = None) -> str | None:
+        """Return the label of the action prescribed at `key`, or `default` if none
+        is prescribed."""
+        node = self._resolve_key(key)
+        action = self._action_at(node)
+        return default if action is None else action
+
+    def __contains__(self, key: typing.Any) -> bool:
+        try:
+            node = self._resolve_key(key)
+        except (KeyError, ValueError, TypeError):
+            return False
+        return self._action_at(node) is not None
+
+    def _reachable_nodes(self) -> typing.Iterator[Node]:
+        """The representative nodes of the player's information sets at which the
+        strategy prescribes an action, in the player's information set order."""
+        for node in cython.cast(ExtensiveGame, self._game)._get_infosets(self._player_label):
+            if self._action_at(node) is not None:
+                yield node
+
+    def __iter__(self) -> typing.Iterator[tuple]:
+        for node in self._reachable_nodes():
+            yield _canonical_history(node)
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+    def keys(self) -> list[tuple]:
+        """The Histories identifying the information sets at which the strategy
+        prescribes an action."""
+        return list(self)
+
+    def values(self) -> list[str]:
+        """The labels of the prescribed actions, in the order of `keys`."""
+        return [self._action_at(node) for node in self._reachable_nodes()]
+
+    def items(self) -> list[tuple[tuple, str]]:
+        """(History, action label) pairs, in the order of `keys`."""
+        return [
+            (_canonical_history(node), self._action_at(node))
+            for node in self._reachable_nodes()
+        ]

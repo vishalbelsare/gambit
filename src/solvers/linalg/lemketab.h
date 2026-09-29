@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/tools/lcp/lemketab.h
+// FILE: src/solvers/linalg/lemketab.h
 // Declaration of Lemke tableau class
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,52 +20,43 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_LINALG_LEMKETAB_H
-#define GAMBIT_LINALG_LEMKETAB_H
+#ifndef GAMBIT_SOLVERS_LINALG_LEMKETAB_H
+#define GAMBIT_SOLVERS_LINALG_LEMKETAB_H
 
+#include "core/cancel.h"
 #include "tableau.h"
 
-namespace Gambit {
-namespace linalg {
+namespace Gambit::linalg {
 
-template <class T> class LemkeTableau : public Tableau<T> {
-protected:
-//  T eps2;
+template <class T> class LemkeTableau final : public Tableau<T> {
 public:
-//   LTableau(void);
-  class BadPivot : public Exception  {
+  class BadPivot final : public std::runtime_error {
   public:
-    virtual ~BadPivot() throw() { }
-    const char *what(void) const throw() { return "Bad Pivot in LTableau"; }
+    BadPivot() : std::runtime_error("Bad pivot in LemkeTableau") {}
+    ~BadPivot() noexcept override = default;
   };
-  class BadExitIndex : public Exception  {
+  class BadExitIndex final : public std::runtime_error {
   public:
-    virtual ~BadExitIndex() throw() { }
-    const char *what(void) const throw() { return "Bad Exit Index in LTableau"; }
+    BadExitIndex() : std::runtime_error("Bad exit index in LemkeTableau") {}
+    ~BadExitIndex() noexcept override = default;
   };
-  LemkeTableau(const Matrix<T> &A, const Vector<T> &b);
-  LemkeTableau(const Tableau<T> &);
-  virtual ~LemkeTableau();
+  LemkeTableau(const Matrix<T> &A, const Vector<T> &b) : Tableau<T>(A, b) {}
+  ~LemkeTableau() = default;
 
   int SF_PivotIn(int i);
   int SF_ExitIndex(int i);
-  int SF_LCPPath(int dup); // follow a path of ACBFS's from one CBFS to another
-  int PivotIn(int i);
+  /// Executes one step of the Lemke-Howson algorithm, following a path of
+  /// ACBFS's (almost-complementary basic feasible solutions) from one CBFS to
+  /// another
+  int SF_LCPPath(int dup, const CancelToken &p_cancel = CancelToken());
+
+  /// Determines, for the current tableau and variable to be added to the
+  /// basis, which element should leave the basis. The choice is the one
+  /// specified by Eaves, which is guaranteed not to cycle, even if the
+  /// problem is degenerate.
   int ExitIndex(int i);
-  int LemkePath(int dup); // follow a path of ACBFS's from one CBFS to another
 };
 
-}  // end namespace Gambit::linalg
-}  // end namespace Gambit
- 
-#endif     // GAMBIT_LINALG_LEMKETAB_H
+} // end namespace Gambit::linalg
 
-
-
-
-
-
-
-
-
-
+#endif // GAMBIT_SOLVERS_LINALG_LEMKETAB_H

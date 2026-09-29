@@ -1,0 +1,249 @@
+import io
+
+import pytest
+
+import pygambit as gbt
+
+
+def _parse_efg(text: str) -> gbt.Game:
+    with io.StringIO(text) as f:
+        return gbt.read_efg(f)
+
+
+def _parse_nfg(text: str) -> gbt.Game:
+    with io.StringIO(text) as f:
+        return gbt.read_nfg(f)
+
+
+LEGACY_EFG_HEADER = 'EFG 2 R "t" { "A" "B" }\n""\np "" 1 1 "" { "l" "r" } 0\n'
+
+
+def test_read_efg_empty_outcome_labels_are_normalized():
+    g = _parse_efg(LEGACY_EFG_HEADER + 't "" 1 "" { 1, -1 }\nt "" 2 "" { 2, -2 }\n')
+    assert g.get_outcomes() == ["_1", "_2"]
+
+
+def test_read_efg_repeated_outcome_id_consistent():
+    g = _parse_efg(LEGACY_EFG_HEADER + 't "" 1 "" { 1, -1 }\nt "" 1 "" { 1, -1 }\n')
+    assert len(g.get_outcomes()) == 1
+
+
+def test_read_efg_empty_action_labels_are_normalized():
+    g = _parse_efg('EFG 2 R "t" { "A" "B" }\n""\np "" 1 1 "" { "" "" } 0\n'
+                   't "" 1 "" { 1, -1 }\nt "" 2 "" { 2, -2 }\n')
+    assert g.get_actions(gbt.H.path()) == ["_1", "_2"]
+
+
+def test_read_efg_duplicate_action_labels_are_normalized():
+    g = _parse_efg('EFG 2 R "t" { "A" "B" }\n""\np "" 1 1 "" { "l" "l" } 0\n'
+                   't "" 1 "" { 1, -1 }\nt "" 2 "" { 2, -2 }\n')
+    assert g.get_actions(gbt.H.path()) == ["l_1", "l_2"]
+
+
+def test_read_efg_repeated_infoset_duplicate_labels_consistent():
+    """A personal infoset spanning two nodes restates its (duplicate) action labels at
+    each node; both restatements must normalize the same way, or the second would be
+    (incorrectly) rejected as inconsistent with the first.
+    """
+    g = _parse_efg(
+        'EFG 2 R "t" { "A" "B" }\n""\n'
+        'p "" 1 1 "" { "l" "l" } 0\n'
+        'p "" 1 1 "" { "l" "l" } 0\n'
+        't "" 1 "" { 1, -1 }\n'
+        't "" 2 "" { 2, -2 }\n'
+        't "" 3 "" { 3, -3 }\n'
+    )
+    assert g.get_actions(gbt.H.path()) == ["l_1", "l_2"]
+
+
+_NFG_PAYOFF_BODY = '\n{\n{ "" 1, 1 }\n{ "" 0, 0 }\n{ "" 0, 0 }\n{ "" 1, 1 }\n}\n1 2 3 4\n'
+
+
+def test_read_nfg_empty_strategy_labels_are_normalized():
+    g = _parse_nfg('NFG 1 R "t" { "A" "B" }\n\n{ { "" "" }\n{ "x" "y" }\n}\n""\n' +
+                   _NFG_PAYOFF_BODY)
+    assert g.get_strategies("A") == ["_1", "_2"]
+
+
+def test_read_nfg_duplicate_strategy_labels_are_normalized():
+    g = _parse_nfg('NFG 1 R "t" { "A" "B" }\n\n{ { "l" "l" }\n{ "x" "y" }\n}\n""\n' +
+                   _NFG_PAYOFF_BODY)
+    assert g.get_strategies("A") == ["l_1", "l_2"]
+
+
+def test_read_nfg_strategy_labels_swap_default_numbering():
+    """A player's strategy labels as parsed are the reverse of "1", "2", the default
+    numeric labels table construction assigns first; relabelling one at a time would
+    collide on the intermediate state, the hazard RelabelStrategies exists to avoid.
+    """
+    g = _parse_nfg('NFG 1 R "t" { "A" "B" }\n\n{ { "2" "1" }\n{ "x" "y" }\n}\n""\n' +
+                   _NFG_PAYOFF_BODY)
+    assert g.get_strategies("A") == ["2", "1"]
+
+
+def test_string_empty():
+    with pytest.raises(ValueError) as excinfo:
+        _parse_efg("")
+    assert (
+        "Parse error in game file: line 1:2: Expecting EFG file type indicator"
+        in str(excinfo.value)
+    )
+
+
+def test_efg_no_newline_end():
+    _parse_nfg(
+        'NFG 1 R "prisoners dilemma"\n {"Player 1" "Player 2"} {2 2}\n'
+        ' -6 -6 -10 0 0 -10 -1 -1.0'
+    )
+
+
+def test_string_wrong_magic():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig1").to_efg()
+    file_text = file_text.replace("EFG", "")
+    with pytest.raises(ValueError) as excinfo:
+        _parse_efg(file_text)
+    assert (
+        "Parse error in game file: line 1:3: Expecting EFG file type indicator"
+        in str(excinfo.value)
+    )
+
+
+def test_efg_unsupported_version():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig1").to_efg()
+    file_text = file_text.replace("EFG 2", "EFG 1")
+    with pytest.raises(ValueError) as excinfo:
+        _parse_efg(file_text)
+    assert "Parse error in game file: line 1:6: Accepting only EFG version 2" in str(excinfo.value)
+
+
+def test_efg_unsupported_precision():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig1").to_efg()
+    file_text = file_text.replace("EFG 2 R", "EFG 2 X")
+    with pytest.raises(ValueError) as excinfo:
+        _parse_efg(file_text)
+    assert (
+        "Parse error in game file: line 1:9: Accepting only EFG R or D data type"
+        in str(excinfo.value)
+    )
+
+
+def test_efg_invalid_node_type():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig2").to_efg()
+    file_text = file_text.replace('p "" 1 1', 'x "" 1 1')
+    with pytest.raises(ValueError) as excinfo:
+        _parse_efg(file_text)
+    assert "Parse error in game file: line 4:3: Invalid type of node" in str(excinfo)
+
+
+def test_efg_payoffs_too_many():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig2").to_efg()
+    file_text = file_text.replace("1, 1", "1, 2, 3")
+    with pytest.raises(ValueError) as excinfo:
+        _parse_efg(file_text)
+    assert "Parse error in game file: line 5:29: Expected '}'" in str(excinfo)
+
+
+def test_nfg_title_missing():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig2").to_nfg()
+    file_text = file_text.replace('"Selten (IJGT 1975) Figure 2"', "")
+    with pytest.raises(ValueError) as excinfo:
+        _parse_nfg(file_text)
+    assert "Parse error in game file: line 1:11: Game title missing" in str(excinfo)
+
+
+def test_nfg_player_missing():
+    file_text = gbt.catalog.load("journals/ijgt/selten1975/fig2").to_nfg()
+    file_text = file_text.replace('"Player 2"', "")
+    with pytest.raises(ValueError) as excinfo:
+        _parse_nfg(file_text)
+    assert "Parse error in game file: line 4:2: Expected '}'" in str(excinfo)
+
+
+def test_nfg_payoffs_not_enough():
+    data = """
+NFG 1 R "Selten (IJGT, 75), Figure 2, normal form" { "Player 1" "Player 2" } { 3 2 }
+1 1 0 2 0 2 1 1 0 3
+"""
+    with pytest.raises(ValueError, match="Expected numerical payoff"):
+        _parse_nfg(data)
+
+
+def test_nfg_payoffs_too_many():
+    data = """
+NFG 1 R "Selten (IJGT, 75), Figure 2, normal form" { "Player 1" "Player 2" } { 3 2 }
+1 1 0 2 0 2 1 1 0 3 2 0 5 1
+"""
+    with pytest.raises(ValueError, match="end-of-file"):
+        _parse_nfg(data)
+
+
+def test_nfg_outcomes_not_enough():
+    data = """
+NFG 1 R "Two person 2 x 2 game with unique mixed equilibrium" { "Player 1" "Player 2" }
+
+{ { "1" "2" }
+{ "1" "2" }
+}
+""
+
+{
+{ "" 2, 0 }
+{ "" 0, 1 }
+{ "" 0, 1 }
+{ "" 1, 0 }
+}
+1 2 3
+"""
+    with pytest.raises(ValueError, match="Expected outcome index"):
+        _parse_nfg(data)
+
+
+def test_efg_label_malformed_utf8_rejected():
+    """A genuinely ill-formed UTF-8 byte sequence in a label is rejected (#862).
+
+    A Python ``str`` cannot hold ill-formed UTF-8, so this is not reachable through the
+    normal string-based read_efg/label-setter API; it is exercised here by feeding raw
+    bytes directly through a binary buffer, bypassing the encode step in read_game().
+    """
+    file_bytes = b'EFG 2 R "t" { "A\x80" "B" }\n""\np "" 1 1 "" { "l" "r" } 0\n'
+    with io.BytesIO(file_bytes) as f, pytest.raises(ValueError, match="Invalid label"):
+        gbt.read_efg(f)
+
+
+def test_efg_action_label_malformed_utf8_rejected():
+    """Malformed UTF-8 in an action label is rejected the same way, via the format check
+    inside AppendMove/InsertMove rather than the (now-removed) Action.SetLabel.
+    """
+    file_bytes = b'EFG 2 R "t" { "A" "B" }\n""\np "" 1 1 "" { "l\x80" "r" } 0\n'
+    with io.BytesIO(file_bytes) as f, pytest.raises(ValueError, match="Invalid label"):
+        gbt.read_efg(f)
+
+
+def test_efg_title_malformed_utf8_rejected():
+    """Malformed UTF-8 in the game title is rejected too, but via CheckText (#862):
+    the message is distinct from a label's, since title has no printable/spacing rule.
+    """
+    file_bytes = b'EFG 2 R "t\x80" { "A" "B" }\n""\np "" 1 1 "" { "l" "r" } 0\n'
+    with io.BytesIO(file_bytes) as f, pytest.raises(ValueError, match="Invalid text"):
+        gbt.read_efg(f)
+
+
+def test_nfg_outcomes_too_many():
+    data = """
+NFG 1 R "Two person 2 x 2 game with unique mixed equilibrium" { "Player 1" "Player 2" }
+
+{ { "1" "2" }
+{ "1" "2" }
+}
+""
+
+{
+{ "" 2, 0 }
+{ "" 0, 1 }
+{ "" 0, 1 }
+{ "" 1, 0 }
+}
+1 2 3 4 2
+"""
+    with pytest.raises(ValueError, match="end-of-file"):
+        _parse_nfg(data)

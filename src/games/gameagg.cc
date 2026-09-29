@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/gameagg.cc
+// FILE: src/games/gameagg.cc
 // Implementation of action-graph game representation
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,86 +20,222 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
+#include <type_traits>
 #include <iostream>
-#include <sstream>
 
-#include "gambit.h"
+#include "games.h"
 #include "gameagg.h"
 
 namespace Gambit {
 
 //========================================================================
-//                  class AggPureStrategyProfileRep
+//                  class AGGPureStrategyProfileRep
 //========================================================================
 
-class AggPureStrategyProfileRep : public PureStrategyProfileRep {
+class AGGPureStrategyProfileRep : public PureStrategyProfileRep {
 public:
-  AggPureStrategyProfileRep(const Game &p_game)
-    : PureStrategyProfileRep(p_game) { }
-  virtual PureStrategyProfileRep *Copy(void) const
-  { return new AggPureStrategyProfileRep(*this); }
+  explicit AGGPureStrategyProfileRep(const Game &p_game) : PureStrategyProfileRep(p_game) {}
+  std::shared_ptr<PureStrategyProfileRep> Copy() const override
+  {
+    return std::make_shared<AGGPureStrategyProfileRep>(*this);
+  }
 
-  virtual void SetStrategy(const GameStrategy &);
-  virtual GameOutcome GetOutcome(void) const { throw UndefinedException(); }
-  virtual void SetOutcome(GameOutcome p_outcome)
-  { throw UndefinedException(); }
-  virtual Rational GetPayoff(int pl) const;
-  virtual Rational GetStrategyValue(const GameStrategy &) const;
+  GameOutcome GetOutcome() const override { throw UndefinedException(); }
+  Rational GetPayoff(const GamePlayer &) const override;
+  Rational GetStrategyValue(const GameStrategy &) const override;
 };
 
 //------------------------------------------------------------------------
-//       AggPureStrategyProfileRep: Data access and manipulation
+//       AGGPureStrategyProfileRep: Data access and manipulation
 //------------------------------------------------------------------------
 
-void AggPureStrategyProfileRep::SetStrategy(const GameStrategy &s)
+Rational AGGPureStrategyProfileRep::GetPayoff(const GamePlayer &p_player) const
 {
-  m_profile[s->GetPlayer()->GetNumber()] = s;
-}
-
-Rational AggPureStrategyProfileRep::GetPayoff(int pl) const
-{
-  agg::AGG *aggPtr = dynamic_cast<GameAggRep &>(*m_nfg).aggPtr;
-  int s[aggPtr->getNumPlayers()];
+  const std::shared_ptr<agg::AGG> aggPtr = dynamic_cast<GameAGGRep &>(*m_game).aggPtr;
+  std::vector<int> s(aggPtr->getNumPlayers());
   for (int i = 1; i <= aggPtr->getNumPlayers(); i++) {
-    s[i-1] = m_profile[i]->GetNumber() -1;
+    s[i - 1] = GetStrategy(m_game->GetPlayer(i))->GetNumber() - 1;
   }
-  return aggPtr->getPurePayoff(pl-1, s);
+  return aggPtr->getPurePayoff<Rational>(p_player->GetNumber() - 1, s);
 }
 
-Rational
-AggPureStrategyProfileRep::GetStrategyValue(const GameStrategy &p_strategy) const
+Rational AGGPureStrategyProfileRep::GetStrategyValue(const GameStrategy &p_strategy) const
 {
-  int player = p_strategy->GetPlayer()->GetNumber();
-  agg::AGG *aggPtr = dynamic_cast<GameAggRep &>(*m_nfg).aggPtr;
-  int s[aggPtr->getNumPlayers()];
+  const int player = p_strategy->GetPlayer()->GetNumber();
+  const std::shared_ptr<agg::AGG> aggPtr = dynamic_cast<GameAGGRep &>(*m_game).aggPtr;
+  std::vector<int> s(aggPtr->getNumPlayers());
   for (int i = 1; i <= aggPtr->getNumPlayers(); i++) {
-    s[i-1] = m_profile[i]->GetNumber() - 1;
+    s[i - 1] = GetStrategy(m_game->GetPlayer(i))->GetNumber() - 1;
   }
-  s[player-1] = p_strategy->GetNumber() - 1;
-  return aggPtr->getPurePayoff(player-1, s);
+  s[player - 1] = p_strategy->GetNumber() - 1;
+  return aggPtr->getPurePayoff<Rational>(player - 1, s);
 }
 
-//------------------------------------------------------------------------
-//                        GameAggRep: Lifecycle
-//------------------------------------------------------------------------
+//========================================================================
+//                   AGGMixedStrategyProfileRep<T>
+//========================================================================
 
-GameAggRep::GameAggRep(agg::AGG *p_aggPtr)
-  : aggPtr(p_aggPtr)
+template <class T> class AGGMixedStrategyProfileRep : public MixedStrategyProfileRep<T> {
+
+public:
+  explicit AGGMixedStrategyProfileRep(const StrategySupportProfile &p_support)
+    : MixedStrategyProfileRep<T>(p_support)
+  {
+  }
+  ~AGGMixedStrategyProfileRep() override = default;
+
+  std::unique_ptr<MixedStrategyProfileRep<T>> Copy() const override
+  {
+    return std::make_unique<AGGMixedStrategyProfileRep>(*this);
+  }
+  T GetPayoff(int pl) const override;
+  T GetPayoffDeriv(int pl, const GameStrategy &) const override;
+  T GetPayoffDeriv(int pl, const GameStrategy &, const GameStrategy &) const override;
+  void GetPayoffDerivBlock(int pl, Vector<T> &p_values, Matrix<T> &p_derivs) const override;
+};
+
+template <class T> T AGGMixedStrategyProfileRep<T>::GetPayoff(int pl) const
 {
-  for (int pl = 1; pl <= aggPtr->getNumPlayers(); pl++) {
-    m_players.Append(new GamePlayerRep(this, pl, aggPtr->getNumActions(pl-1)));
-    m_players[pl]->m_label = lexical_cast<std::string>(pl);
-    for (int st = 1; st <= m_players[pl]->NumStrategies(); st++) {
-      m_players[pl]->m_strategies[st]->SetLabel(lexical_cast<std::string>(st));
+  auto &g = dynamic_cast<GameAGGRep &>(*(this->m_support.GetGame()));
+  std::vector<T> s(g.aggPtr->getNumActions());
+  for (int i = 0; i < g.aggPtr->getNumPlayers(); ++i) {
+    for (int j = 0; j < g.aggPtr->getNumActions(i); ++j) {
+      const GameStrategy strategy =
+          this->m_support.GetGame()->GetPlayer(i + 1)->GetStrategy(j + 1);
+      const int ind = this->m_profileIndex.at(strategy);
+      s[g.aggPtr->firstAction(i) + j] = (ind == -1) ? T(0) : this->m_probs.GetFlattened()[ind];
     }
   }
-  for (int pl = 1, id = 1; pl <= m_players.Length(); pl++) {
-    for (int st = 1; st <= m_players[pl]->m_strategies.Length();
-	 m_players[pl]->m_strategies[st++]->m_id = id++);
+  return g.aggPtr->getMixedPayoff(pl - 1, s);
+}
+
+template <class T>
+T AGGMixedStrategyProfileRep<T>::GetPayoffDeriv(int pl, const GameStrategy &ps) const
+{
+  auto &g = dynamic_cast<GameAGGRep &>(*(this->m_support.GetGame()));
+  std::vector<T> s(g.aggPtr->getNumActions());
+  for (int i = 0; i < g.aggPtr->getNumPlayers(); ++i) {
+    if (i + 1 == ps->GetPlayer()->GetNumber()) {
+      for (int j = 0; j < g.aggPtr->getNumActions(i); ++j) {
+        s[g.aggPtr->firstAction(i) + j] = T(0);
+      }
+      s.at(g.aggPtr->firstAction(i) + ps->GetNumber() - 1) = T(1);
+    }
+    else {
+      for (int j = 0; j < g.aggPtr->getNumActions(i); ++j) {
+        const GameStrategy strategy =
+            this->m_support.GetGame()->GetPlayer(i + 1)->GetStrategy(j + 1);
+        const int &ind = this->m_profileIndex.at(strategy);
+        s[g.aggPtr->firstAction(i) + j] = (ind == -1) ? T(0) : this->m_probs.GetFlattened()[ind];
+      }
+    }
+  }
+  return g.aggPtr->getMixedPayoff(pl - 1, s);
+}
+
+template <class T>
+T AGGMixedStrategyProfileRep<T>::GetPayoffDeriv(int pl, const GameStrategy &ps1,
+                                                const GameStrategy &ps2) const
+{
+  const auto player1 = ps1->GetPlayer().get();
+  const auto player2 = ps2->GetPlayer().get();
+  if (player1 == player2) {
+    return T(0);
+  }
+
+  auto &g = dynamic_cast<GameAGGRep &>(*(this->m_support.GetGame()));
+  std::vector<T> s(g.aggPtr->getNumActions());
+  for (int i = 0; i < g.aggPtr->getNumPlayers(); ++i) {
+    if (i + 1 == player1->GetNumber()) {
+      for (int j = 0; j < g.aggPtr->getNumActions(i); ++j) {
+        s[g.aggPtr->firstAction(i) + j] = T(0);
+      }
+      s.at(g.aggPtr->firstAction(i) + ps1->GetNumber() - 1) = T(1);
+    }
+    else if (i + 1 == player2->GetNumber()) {
+      for (int j = 0; j < g.aggPtr->getNumActions(i); ++j) {
+        s[g.aggPtr->firstAction(i) + j] = T(0);
+      }
+      s.at(g.aggPtr->firstAction(i) + ps2->GetNumber() - 1) = T(1);
+    }
+    else {
+      for (int j = 0; j < g.aggPtr->getNumActions(i); ++j) {
+        const GameStrategy strategy =
+            this->m_support.GetGame()->GetPlayer(i + 1)->GetStrategy(j + 1);
+        const int ind = this->m_profileIndex.at(strategy);
+        s[g.aggPtr->firstAction(i) + j] = (ind == -1) ? T(0) : this->m_probs.GetFlattened()[ind];
+      }
+    }
+  }
+  return g.aggPtr->getMixedPayoff(pl - 1, s);
+}
+
+// Each row of derivatives comes from a single leave-one-out convolution in the AGG, which is
+// available in floating point only; exact computation uses the default.
+template <class T>
+void AGGMixedStrategyProfileRep<T>::GetPayoffDerivBlock(int pl, Vector<T> &p_values,
+                                                        Matrix<T> &p_derivs) const
+{
+  if constexpr (!std::is_same_v<T, double>) {
+    MixedStrategyProfileRep<T>::GetPayoffDerivBlock(pl, p_values, p_derivs);
+  }
+  else {
+    const auto game = this->m_support.GetGame();
+    auto &g = dynamic_cast<GameAGGRep &>(*game);
+    const auto &agg = *g.aggPtr;
+    std::vector<double> s(agg.getNumActions());
+    for (int i = 0; i < agg.getNumPlayers(); ++i) {
+      for (int j = 0; j < agg.getNumActions(i); ++j) {
+        const int ind = this->m_profileIndex.at(game->GetPlayer(i + 1)->GetStrategy(j + 1));
+        s[agg.firstAction(i) + j] = (ind == -1) ? 0.0 : this->m_probs.GetFlattened()[ind];
+      }
+    }
+
+    const auto player = game->GetPlayer(pl);
+    const auto &strategies = this->m_support.GetStrategies(player);
+    p_values = Vector<double>(strategies.size());
+    p_derivs = Matrix<double>(strategies.size(), this->m_probs.GetFlattened().size());
+    p_derivs = 0.0;
+    std::vector<double> row(agg.getNumActions());
+    size_t r = 1;
+    for (const auto &strategy : strategies) {
+      p_values[r] = GetPayoffDeriv(pl, strategy);
+      g.aggPtr->getPayoffJacobianRow(pl - 1, strategy->GetNumber() - 1, s, row);
+      for (const auto &other : game->GetPlayers()) {
+        if (other == player) {
+          continue;
+        }
+        for (const auto &otherStrategy : this->m_support.GetStrategies(other)) {
+          p_derivs(r, this->m_profileIndex.at(otherStrategy)) =
+              row[agg.firstAction(other->GetNumber() - 1) + otherStrategy->GetNumber() - 1];
+        }
+      }
+      r++;
+    }
   }
 }
 
-Game GameAggRep::Copy(void) const
+template class AGGMixedStrategyProfileRep<double>;
+template class AGGMixedStrategyProfileRep<Rational>;
+
+//------------------------------------------------------------------------
+//                        GameAGGRep: Lifecycle
+//------------------------------------------------------------------------
+
+GameAGGRep::GameAGGRep(std::shared_ptr<agg::AGG> p_aggPtr) : aggPtr(p_aggPtr)
+{
+  for (int pl = 1; pl <= aggPtr->getNumPlayers(); pl++) {
+    m_players.push_back(std::make_shared<GamePlayerRep>(this, pl, lexical_cast<std::string>(pl),
+                                                        aggPtr->getNumActions(pl - 1)));
+    std::for_each(m_players.back()->m_strategies.begin(), m_players.back()->m_strategies.end(),
+                  [st = 1](const std::shared_ptr<GameStrategyRep> &s) mutable {
+                    s->m_label = std::to_string(st++);
+                  });
+  }
+  IndexStrategies();
+}
+
+Game GameAGGRep::Copy() const
 {
   std::ostringstream os;
   WriteAggFile(os);
@@ -108,92 +244,83 @@ Game GameAggRep::Copy(void) const
 }
 
 //------------------------------------------------------------------------
-//                  GameAggRep: Dimensions of the game
+//                    GameAGGRep: Factory functions
 //------------------------------------------------------------------------
 
-Array<int> GameAggRep::NumStrategies(void) const
+PureStrategyProfile GameAGGRep::NewPureStrategyProfile() const
 {
-  Array<int> ns;
-  for (int pl = 1; pl <= aggPtr->getNumPlayers(); pl++) {
-    ns.Append(m_players[pl]->NumStrategies());
+  return PureStrategyProfile(std::make_shared<AGGPureStrategyProfileRep>(
+      std::const_pointer_cast<GameRep>(shared_from_this())));
+}
+
+MixedStrategyProfile<double> GameAGGRep::NewMixedStrategyProfile(double) const
+{
+  return MixedStrategyProfile<double>(std::make_unique<AGGMixedStrategyProfileRep<double>>(
+      StrategySupportProfile(std::const_pointer_cast<GameRep>(shared_from_this()))));
+}
+
+MixedStrategyProfile<Rational> GameAGGRep::NewMixedStrategyProfile(const Rational &) const
+{
+  // AGG supports exact payoff computation on Rational profiles throughout, via the same
+  // convolution algorithm as the double engine (getMixedPayoff<Rational> et al.); see
+  // AGGMixedStrategyProfileRep<Rational>::GetPayoff.
+  return MixedStrategyProfile<Rational>(std::make_unique<AGGMixedStrategyProfileRep<Rational>>(
+      StrategySupportProfile(std::const_pointer_cast<GameRep>(shared_from_this()))));
+}
+MixedStrategyProfile<double>
+GameAGGRep::NewMixedStrategyProfile(double, const StrategySupportProfile &spt) const
+{
+  return MixedStrategyProfile<double>(std::make_unique<AGGMixedStrategyProfileRep<double>>(spt));
+}
+
+MixedStrategyProfile<Rational>
+GameAGGRep::NewMixedStrategyProfile(const Rational &, const StrategySupportProfile &spt) const
+{
+  return MixedStrategyProfile<Rational>(
+      std::make_unique<AGGMixedStrategyProfileRep<Rational>>(spt));
+}
+
+//------------------------------------------------------------------------
+//                  GameAGGRep: General data access
+//------------------------------------------------------------------------
+
+bool GameAGGRep::IsConstSum() const
+{
+  auto payoff_sum = [&](const PureStrategyProfile &p) {
+    return sum_function(m_players, [&](const auto &player) { return p->GetPayoff(player); });
+  };
+  const Rational sum = payoff_sum(NewPureStrategyProfile());
+
+  auto contingencies = StrategyContingencies(std::const_pointer_cast<GameRep>(shared_from_this()));
+  return std::all_of(contingencies.begin(), contingencies.end(),
+                     [&](const PureStrategyProfile &p) { return payoff_sum(p) == sum; });
+}
+
+Rational GameAGGRep::GetPlayerMinPayoff(const GamePlayer &p_player) const
+{
+  Rational minpay = NewPureStrategyProfile()->GetPayoff(p_player);
+  for (const auto &profile :
+       StrategyContingencies(std::const_pointer_cast<GameRep>(shared_from_this()))) {
+    minpay = std::min(minpay, profile->GetPayoff(p_player));
   }
-  return ns;
+  return minpay;
 }
 
-GameStrategy GameAggRep::GetStrategy(int p_index) const
+Rational GameAGGRep::GetPlayerMaxPayoff(const GamePlayer &p_player) const
 {
-  for (int pl = 1; pl <= aggPtr->getNumPlayers(); pl++) {
-    if (m_players[pl]->NumStrategies() >= p_index) {
-      return m_players[pl]->GetStrategy(p_index);
-    }
-    else {
-      p_index -= m_players[pl]->NumStrategies();
-    }
+  Rational maxpay = NewPureStrategyProfile()->GetPayoff(p_player);
+  for (const auto &profile :
+       StrategyContingencies(std::const_pointer_cast<GameRep>(shared_from_this()))) {
+    maxpay = std::max(maxpay, profile->GetPayoff(p_player));
   }
-  throw IndexException();
-}
- 
-//------------------------------------------------------------------------
-//                    GameAggRep: Factory functions
-//------------------------------------------------------------------------
-
-PureStrategyProfile GameAggRep::NewPureStrategyProfile(void) const
-{
-  return PureStrategyProfile(new AggPureStrategyProfileRep(const_cast<GameAggRep *>(this)));
-}
-
-MixedStrategyProfile<double> GameAggRep::NewMixedStrategyProfile(double) const
-{
-  return new AggMixedStrategyProfileRep<double>(StrategySupportProfile(const_cast<GameAggRep *>(this)));
-}
-
-MixedStrategyProfile<Rational> GameAggRep::NewMixedStrategyProfile(const Rational &) const
-{
-  return new AggMixedStrategyProfileRep<Rational>(StrategySupportProfile(const_cast<GameAggRep *>(this)));
-}
-MixedStrategyProfile<double> GameAggRep::NewMixedStrategyProfile(double, const StrategySupportProfile& spt) const
-{
-  return new AggMixedStrategyProfileRep<double>(spt);
-}
-
-MixedStrategyProfile<Rational> GameAggRep::NewMixedStrategyProfile(const Rational &, const StrategySupportProfile& spt) const
-{
-  return new AggMixedStrategyProfileRep<Rational>(spt);
+  return maxpay;
 }
 
 //------------------------------------------------------------------------
-//                  GameAggRep: General data access
+//                   GameAGGRep: Writing data files
 //------------------------------------------------------------------------
 
-bool GameAggRep::IsConstSum(void) const
-{
-  AggPureStrategyProfileRep profile(const_cast<GameAggRep *>(this));
-
-  Rational sum(0);
-  for (int pl = 1; pl <= m_players.Length(); pl++) {
-    sum += profile.GetPayoff(pl);
-  }
-
-  for (StrategyProfileIterator iter(StrategySupportProfile(const_cast<GameAggRep *>(this)));
-       !iter.AtEnd(); iter++) {
-    Rational newsum(0);
-    for (int pl = 1; pl <= m_players.Length(); pl++) {
-      newsum += (*iter)->GetPayoff(pl);
-    }
-    if (newsum != sum) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-//------------------------------------------------------------------------
-//                   GameAggRep: Writing data files
-//------------------------------------------------------------------------
-
-void GameAggRep::Write(std::ostream &p_stream,
-		       const std::string &p_format /*="native"*/) const
+void GameAGGRep::Write(std::ostream &p_stream, const std::string &p_format /*="native"*/) const
 {
   if (p_format == "native" || p_format == "agg") {
     WriteAggFile(p_stream);
@@ -206,7 +333,7 @@ void GameAggRep::Write(std::ostream &p_stream,
   }
 }
 
-void GameAggRep::WriteAggFile(std::ostream &s) const
+void GameAGGRep::WriteAggFile(std::ostream &s) const
 {
   s << "#AGG" << std::endl;
   s << aggPtr->getNumPlayers() << std::endl;
@@ -217,9 +344,8 @@ void GameAggRep::WriteAggFile(std::ostream &s) const
   }
   s << std::endl;
   for (int i = 0; i < aggPtr->getNumPlayers(); i++) {
-    std::copy(aggPtr->getActionSet(i).begin(), 
-	      aggPtr->getActionSet(i).end(),
-	      std::ostream_iterator<int>(s," "));
+    std::copy(aggPtr->getActionSet(i).begin(), aggPtr->getActionSet(i).end(),
+              std::ostream_iterator<int>(s, " "));
     s << std::endl;
   }
   aggPtr->printActionGraph(s);
@@ -230,18 +356,10 @@ void GameAggRep::WriteAggFile(std::ostream &s) const
 
   // payoffs
   for (int i = 0; i < aggPtr->getNumActionNodes(); i++) {
-    s << "1" << std::endl; //type of payoff output
+    s << "1" << std::endl; // type of payoff output
     aggPtr->printPayoffs(s, i);
     s << std::endl;
   }
 }
 
-Game GameAggRep::ReadAggFile(std::istream& in){
-  agg::AGG *aggPtr = agg::AGG::makeAGG(in);
-  if (!aggPtr) {
-    throw InvalidFileException();
-  }
-  return new GameAggRep(aggPtr);
-}
-
-}  // end namespace Gambit
+} // end namespace Gambit

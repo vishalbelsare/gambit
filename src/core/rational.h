@@ -1,14 +1,14 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/rational.h
+// FILE: src/core/rational.h
 // Interface to a rational number class
 //
 // The original copyright and license are included below.
 //
 
-/* 
+/*
 Copyright (C) 1988 Free Software Foundation
     written by Doug Lea (dl@rocky.oswego.edu)
 
@@ -25,11 +25,16 @@ License along with this library; if not, write to the Free Software
 Foundation, 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
-#ifndef LIBGAMBIT_RATIONAL_H
-#define LIBGAMBIT_RATIONAL_H
+#ifndef GAMBIT_CORE_RATIONAL_H
+#define GAMBIT_CORE_RATIONAL_H
+
+#include <cmath>
+#include <compare>
+#include <string>
+
+#include "util.h"
 
 #include "integer.h"
-#include <cmath>
 
 namespace Gambit {
 
@@ -41,84 +46,83 @@ protected:
   void normalize();
 
 public:
-  Rational(void);
-  Rational(double);
-  Rational(int);
-  Rational(long n);
+  Rational();
+  explicit Rational(double);
+  explicit Rational(int);
+  explicit Rational(size_t);
+  explicit Rational(long n);
   Rational(int n, int d);
   Rational(long n, long d);
-  Rational(const Integer& n);
-  Rational(const Integer& n, const Integer& d);
-  Rational(const Rational&);
+  explicit Rational(const Integer &n);
+  Rational(const Integer &n, const Integer &d);
+  Rational(const Rational &);
   ~Rational();
 
-  Rational &operator =  (const Rational& y);
+  Rational &operator=(const Rational &y);
 
   bool operator==(const Rational &y) const;
-  bool operator!=(const Rational &y) const;
-  bool operator< (const Rational &y) const;
+  bool operator<(const Rational &y) const;
   bool operator<=(const Rational &y) const;
-  bool operator> (const Rational &y) const;
+  bool operator>(const Rational &y) const;
   bool operator>=(const Rational &y) const;
+  std::strong_ordering operator<=>(const Rational &y) const;
 
   Rational operator+(const Rational &y) const;
   Rational operator-(const Rational &y) const;
   Rational operator*(const Rational &y) const;
   Rational operator/(const Rational &y) const;
 
-  Rational &operator+=(const Rational& y);
-  Rational &operator-=(const Rational& y);
-  Rational &operator*=(const Rational& y);
-  Rational &operator/=(const Rational& y);
+  Rational &operator+=(const Rational &y);
+  Rational &operator-=(const Rational &y);
+  Rational &operator*=(const Rational &y);
+  Rational &operator/=(const Rational &y);
 
-  Rational operator-(void) const;
-
+  Rational operator-() const;
 
   // builtin Rational functions
 
+  void negate(); // x = -x
+  void invert(); // x = 1/x
 
-  void             negate();                      // x = -x
-  void             invert();                      // x = 1/x
-
-  friend int       sign(const Rational& x);             // -1, 0, or +1
-  friend Rational  abs(const Rational& x);              // absolute value
-  friend Rational  sqr(const Rational& x);              // square
-  friend Rational  pow(const Rational& x, long y);
-  friend Rational  pow(const Rational& x, const Integer& y);
-  const Integer&   numerator() const;
-  const Integer&   denominator() const;
+  friend int sign(const Rational &x);     // -1, 0, or +1
+  friend Rational abs(const Rational &x); // absolute value
+  friend Rational sqr(const Rational &x); // square
+  friend Rational pow(const Rational &x, long y);
+  friend Rational pow(const Rational &x, const Integer &y);
+  const Integer &numerator() const;
+  const Integer &denominator() const;
 
   // coercion & conversion
 
   operator double() const;
-  friend Integer   floor(const Rational& x);
-  friend Integer   ceil(const Rational& x);
-  friend Integer   trunc(const Rational& x);
-  friend Integer   round(const Rational& x);
+  friend Integer floor(const Rational &x);
+  friend Integer ceil(const Rational &x);
+  friend Integer trunc(const Rational &x);
+  friend Integer round(const Rational &x);
 
-  friend std::istream &operator>>(std::istream &s, Rational& y);
-  friend std::ostream &operator<<(std::ostream &s, const Rational& y);
+  friend std::istream &operator>>(std::istream &s, Rational &y);
+  friend std::ostream &operator<<(std::ostream &s, const Rational &y);
 
-  int		   fits_in_float() const;
-  int		   fits_in_double() const;
+  bool fits_in_float() const;
+  bool fits_in_double() const;
 
   // procedural versions of operators
 
-  friend int       compare(const Rational& x, const Rational& y);
-  friend void      add(const Rational& x, const Rational& y, Rational& dest);
-  friend void      sub(const Rational& x, const Rational& y, Rational& dest);
-  friend void      mul(const Rational& x, const Rational& y, Rational& dest);
-  friend void      div(const Rational& x, const Rational& y, Rational& dest);
+  friend int compare(const Rational &x, const Rational &y);
+  friend void add(const Rational &x, const Rational &y, Rational &dest);
+  friend void sub(const Rational &x, const Rational &y, Rational &dest);
+  friend void mul(const Rational &x, const Rational &y, Rational &dest);
+  friend void div(const Rational &x, const Rational &y, Rational &dest);
 
   // error detection
-  bool OK(void) const;
-
+  bool OK() const;
 };
 
 // Naming compatible with Boost's lexical_cast concept for potential future compatibility.
-template<> Rational lexical_cast(const std::string &);
+template <> Rational lexical_cast(const std::string &);
+
+inline int sign(const Rational &x) { return sign(x.num); }
 
 } // end namespace Gambit
 
-#endif // LIBGAMBIT_RATIONAL_H
-
+#endif // GAMBIT_CORE_RATIONAL_H

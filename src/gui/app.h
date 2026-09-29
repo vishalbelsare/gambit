@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/gambit.h
 // Declaration of application-level class for Gambit graphical interface
@@ -20,61 +20,80 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_H
-#define GAMBIT_H
+#ifndef GAMBIT_GUI_APP_H
+#define GAMBIT_GUI_APP_H
+
+#include <vector>
 
 #include <wx/wx.h>
-#include <wx/config.h>    // for wxConfig
-#include <wx/docview.h>   // for wxFileHistory
+#include <wx/config.h>  // for wxConfig
+#include <wx/docview.h> // for wxFileHistory
+#include <wx/splash.h>
 
-class gbtGameDocument;
+namespace Gambit::GUI {
 
-typedef enum {
-  GBT_APP_FILE_OK = 0,
-  GBT_APP_OPEN_FAILED = 1,
-  GBT_APP_PARSE_FAILED = 2
-} gbtAppLoadResult;
+class GameDocument;
 
-class gbtApplication : public wxApp {
-private:
+enum class AppLoadResult : unsigned int {
+  Success = 0,
+  OpenFailed = 1,
+  ParseFailed = 2,
+  UnsupportedRepresentation = 3
+};
+
+class Application final : public wxApp {
   wxString m_currentDir; /* Current position in directory tree. */
-  wxFileHistory m_fileHistory;
-  Gambit::Array<gbtGameDocument *> m_documents;
+  wxFileHistory m_fileHistory{10};
+  std::list<GameDocument *> m_documents;
+  wxSplashScreen *m_splash{nullptr};
+  wxStopWatch m_splashTimer;
+  wxTimer m_splashDismissTimer;
 
-  bool OnInit(void);
+  bool OnInit() override;
+  void DismissSplash();
+  void OnSplashDismissTimer(wxTimerEvent &) { DismissSplash(); }
+  //! Drop `p_filename` from the recently-used list; returns whether it was there.
+  bool ForgetRecentFile(const wxString &p_filename);
+
+  wxDECLARE_EVENT_TABLE();
 
 public:
-  gbtApplication(void);
-  virtual ~gbtApplication() { }
-  
-  const wxString &GetCurrentDir(void)  { return m_currentDir; }
+  Application() = default;
+  ~Application() override = default;
+
+  const wxString &GetCurrentDir() { return m_currentDir; }
   void SetCurrentDir(const wxString &p_dir);
 
-  wxString GetHistoryFile(int index) const
-    { return m_fileHistory.GetHistoryFile(index); }
-  void AddMenu(wxMenu *p_menu) 
-    { m_fileHistory.UseMenu(p_menu); m_fileHistory.AddFilesToMenu(p_menu); }
-  void RemoveMenu(wxMenu *p_menu)  { m_fileHistory.RemoveMenu(p_menu); }
-  
+  wxString GetHistoryFile(int index) const { return m_fileHistory.GetHistoryFile(index); }
+  //! The recently-used files, most recent first.
+  std::vector<wxString> GetRecentFiles() const;
+  void AddMenu(wxMenu *p_menu)
+  {
+    m_fileHistory.UseMenu(p_menu);
+    m_fileHistory.AddFilesToMenu(p_menu);
+  }
+  void RemoveMenu(wxMenu *p_menu) { m_fileHistory.RemoveMenu(p_menu); }
 
-  gbtAppLoadResult LoadFile(const wxString &);
+  AppLoadResult LoadFile(const wxString &, wxWindow *);
+  ;
 #ifdef __WXMAC__
-  void MacOpenFile(const wxString &filename)  { LoadFile(filename); }
-#endif  // __WXMAC__
+  void MacOpenFile(const wxString &filename) override { LoadFile(filename, nullptr); }
+#endif // __WXMAC__
 
   //!
   //! These manage the list of open documents
   //!
   //@{
-  void AddDocument(gbtGameDocument *p_doc) 
-    { m_documents.Append(p_doc); }
-  void RemoveDocument(gbtGameDocument *p_doc)
-    { m_documents.Remove(m_documents.Find(p_doc)); }
-  bool AreDocumentsModified(void) const;
+  void AddDocument(GameDocument *p_doc) { m_documents.push_back(p_doc); }
+  void RemoveDocument(const GameDocument *p_doc)
+  {
+    m_documents.erase(std::find(m_documents.begin(), m_documents.end(), p_doc));
+  }
   //@}
 };
 
-DECLARE_APP(gbtApplication)
+} // namespace Gambit::GUI
 
-#endif // GAMBIT_H
+DECLARE_APP(Gambit::GUI::Application)
 
+#endif // GAMBIT_GUI_APP_H

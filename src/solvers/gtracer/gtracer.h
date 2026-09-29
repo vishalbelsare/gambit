@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gtracer/gtracer.h
+// FILE: src/solvers/gtracer/gtracer.h
 // Top-level include file for Gametracer embedding in Gambit
 // This file is based on GameTracer v0.2, which is
 // Copyright (c) 2002, Ben Blum and Christian Shelton
@@ -22,23 +22,125 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_GTRACER_GTRACER_H
-#define GAMBIT_GTRACER_GTRACER_H
+#ifndef GAMBIT_SOLVERS_GTRACER_GTRACER_H
+#define GAMBIT_SOLVERS_GTRACER_GTRACER_H
 
+#include <functional>
+#include "core/cancel.h"
 #include "cmatrix.h"
 #include "nfgame.h"
-#include "gnmgame.h"
 #include "aggame.h"
+#include "games/game.h"
 
-namespace Gambit {
-namespace gametracer {
+namespace Gambit::gametracer {
 
-int GNM(gnmgame &A, cvector &g, cvector **&Eq, int steps, double fuzz, int LNMFreq, int LNMMax, double LambdaMin, bool wobble, double threshold, bool verbose);
+/// @brief Why GNM's path-following terminated
+enum class GNMTerminationReason {
+  NoMoreBoundaries,  // path crosses no more support boundaries and no next equilibrium is in
+                     // sight
+  NoNextBoundary,    // path has just crossed an equilibrium, but there is no next support
+                     // boundary to aim for
+  NonfiniteStrategy, // numerical breakdown: the retracted strategy has a non-finite component
+  LambdaOutOfRange,  // path has gone far enough in the reverse direction that no further
+                     // equilibria are expected
+  ExcessiveError,    // accumulated tracking error exceeded the threshold and wobbling is disabled
+};
 
-int IPA(gnmgame &A, cvector &g, cvector &zh, double alpha, double fuzz, cvector &ans,int maxiter=-1);
+/// @brief The outcome of a call to GNM: the equilibria found along the path, why the
+///        path-following stopped, and some performance data on the run.  Every termination
+///        site constructs and returns one of these directly, so setting the reason/message
+///        and stopping are one indivisible step.
+struct GNMResult {
+  std::list<cvector> equilibria;
+  GNMTerminationReason reason;
+  std::string message;
+  int numSteps;             // total predictor-corrector steps taken along the path
+  int numBoundaryCrossings; // number of times the support changed
+  int numLNMCalls;          // number of calls made to the local Newton method refinement
+  double finalLambda;       // position on the ray at which path-following stopped
+};
 
-}  // end namespace Gambit::gametracer
-}  // end namespace Gambit
+/// @brief Executes the GNM algorithm on a game
+/// @param g     perturbation ray
+/// @param steps  number of steps to take within a support cell; higher
+///               values of this parameter slow GNM down, but may help it
+///               avoid getting off the path.
+/// @param fuzz   a small floating point cutoff for a variety of things.
+///               can probably be left at 1e-12
+/// @param LNMFreq  a Local Newton Method subroutine will be run every
+///                 LNMFreq steps to decrease accumulated errors.  This
+///                 executes fairly quickly, so LNMFreq can be around 3.
+/// @param LNMMax   the maximum allowed iterations within the LNM algorithm.
+/// @param LambdaMin  should always be negative.  Once the trajectory
+///                   gets this far out, the algorithm terminates, under the
+///                   assumption there are no more equilibria on the path.
+/// @param wobble     this is a boolean value indicating whether to use
+///                   "wobbles" of the perturbation vector to remove
+///                   accumulated errors.  This removes the theoretical guarantee
+///                   of convergence, but in practice may help keep GNM on the path.
+/// @param threshold  the equilibrium error threshold for doing a wobble.  If
+///                   wobbles are disabled, GNM will terminate if the error
+///                   reaches this threshold.
+/// @param p_onStep   a callback function executed on each step of the algorithm and whenever an
+///                   equilibrium is found (with label "NE")
+GNMResult GNM(gnmgame &A, cvector &g, int steps, double fuzz, int LNMFreq, int LNMMax,
+              double LambdaMin, bool wobble, double threshold,
+              std::function<void(const std::string &, const cvector &)> p_onStep,
+              const CancelToken &p_cancel = CancelToken());
 
-#endif  // GAMBIT_GTRACER_GTRACER_H
+/// @brief Why a call to IPA terminated
+enum class IPATerminationReason {
+  Converged,            // the approximating strategy converged to within the requested accuracy
+  MaxIterationsReached, // the iteration limit for this call was reached without converging
+  NonfiniteStrategy,    // numerical breakdown: the computed strategy has a non-finite component
+};
 
+/// @brief The outcome of a call to IPA: the (possibly approximate) strategy found, why the
+///        call stopped, and some performance data on the run.
+struct IPAResult {
+  cvector strategy;
+  IPATerminationReason reason;
+  int numIterations;       // total iterations executed in this call
+  int numLemkeHowsonCalls; // number of times the Lemke-Howson fallback pivoting was needed
+  int numSupportChanges;   // number of iterations in which the strategy's support changed
+  double finalError;       // tracking error (max of the z- and s-differences) at termination
+};
+
+/// @brief Execute the Govindan-Wilson Iterated Polymatrix algorithm for computing a
+///        Nash equilibrium
+/// @param A       the game
+/// @param g       the perturbation ray; a bonus to add to each strategy
+/// @param zh      current approximation for z; updated in place, so that a subsequent call
+///                continues from where this one left off.  Can be initialised to a vector of
+///                all 1's.
+/// @param alpha   stepsize.  Must be a number between 0 and 1, to be interpreted
+///                as the fraction of a complete step to take.
+/// @param fuzz    the cutoff accuracy for an equilibrium after which the algorithm
+///                stops refining it
+/// @param maxiter the maximum number of iterations to attempt
+/// @param p_onStep a callback function executed at the end of each iteration, with the
+///                 iteration number, the current approximate strategy, and the current
+///                 z- and s-differences (the same quantities used to test for convergence)
+IPAResult IPA(const gnmgame &A, const cvector &g, cvector &zh, double alpha, double fuzz,
+              unsigned int maxiter,
+              std::function<void(int, const cvector &, double, double)> p_onStep,
+              const CancelToken &p_cancel = CancelToken());
+
+/// @brief Build a Gametracer representation based on a Gambit game
+/// @param p_game  The game to convert to Gametracer's representation
+/// @param p_scaled  Whether to rescale the payoffs to be on [0, 1]
+std::shared_ptr<gnmgame> BuildGame(const Game &p_game, bool p_scaled);
+
+/// @brief Convert a Gambit mixed strategy profile to a normalized Gametracer
+///        perturbation vector
+/// @exception std::domain_error  If the perturbation vector \p g is not generic,
+///                               that is, if each player does not have a unique
+///                               maximizing strategy
+cvector ToPerturbation(const MixedStrategyProfile<double> &p_profile);
+
+/// @brief Convert a Gametracer vector to a mixed strategy profile on a Gambit game
+MixedStrategyProfile<double> ToProfile(const Game &p_game, const cvector &p_profile);
+
+} // end namespace Gambit::gametracer
+
+#endif // GAMBIT_SOLVERS_GTRACER_GTRACER_H

@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/game.h
+// FILE: src/games/game.h
 // Declaration of base class for representing games
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,324 +20,380 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
+#ifndef GAMBIT_GAMES_GAME_H
+#define GAMBIT_GAMES_GAME_H
 
-#ifndef LIBGAMBIT_GAME_H
-#define LIBGAMBIT_GAME_H
-
+#include <algorithm>
+#include <compare>
+#include <list>
 #include <memory>
-#include "core/dvector.h"
-#include "core/number.h"
+#include <numeric>
+#include <random>
+#include <set>
+#include <stack>
+#include <unordered_map>
+
+#include "core/array.h"
+#include "number.h"
+#include "gameobject.h"
 
 namespace Gambit {
-
-/// This is a base class for all game-related objects.  Primary among
-/// its responsibility is maintaining a reference count.  Calling code
-/// which maintains pointers to objects representing parts of a game
-/// (e.g., nodes) which may be deleted should increment the reference
-/// count for that object.  The library guarantees that any object
-/// with a positive reference count will not have its memory deleted,
-/// but will instead be marked as deleted.  Calling code should always
-/// be careful to check the deleted status of the object before any
-/// operations on it.
-class GameObject {
-protected:
-  int m_refCount;
-  bool m_valid;
-
-public:
-  /// @name Lifecycle
-  //@{
-  /// Constructor; initializes reference count
-  GameObject(void) : m_refCount(0), m_valid(true) { }
-  /// Destructor
-  virtual ~GameObject() { }
-  //@}
-
-  /// @name Validation
-  //@{
-  /// Is the object still valid?
-  bool IsValid(void) const { return m_valid; }
-  /// Invalidate the object; delete if not referenced elsewhere
-  void Invalidate(void)
-  { if (!m_refCount) delete this; else m_valid = false; }
-  //@}
-
-  /// @name Reference counting
-  //@{
-  /// Increment the reference count
-  void IncRef(void) { m_refCount++; }
-  /// Decrement the reference count; delete if reference count is zero.
-  void DecRef(void) { if (!--m_refCount && !m_valid) delete this; }
-  /// Returns the reference count
-  int RefCount(void) const { return m_refCount; }
-  //@}
-};
-
-/// An exception thrown when attempting to dereference an invalidated object 
-class InvalidObjectException : public Exception {
-public:
-  virtual ~InvalidObjectException() throw() { }
-  const char *what(void) const throw()  { return "Dereferencing an invalidated object"; }
-};
-
-
-//
-// This is a handle class that is used by all calling code to refer to
-// member objects of games.  It takes care of all the reference-counting
-// considerations.
-//
-template <class T> class GameObjectPtr {
-private:
-  T *rep;
-
-public:
-  GameObjectPtr(T *r = 0) : rep(r)
-    { if (rep) rep->IncRef(); }
-  GameObjectPtr(const GameObjectPtr<T> &r) : rep(r.rep)
-    { if (rep) rep->IncRef(); }
-  ~GameObjectPtr() { if (rep) rep->DecRef(); }
-
-  GameObjectPtr<T> &operator=(const GameObjectPtr<T> &r)
-    { if (&r != this) {
-	if (rep) rep->DecRef();
-	rep = r.rep;
-	if (rep) rep->IncRef();
-      }
-      return *this;
-    }
-
-  T *operator->(void) const 
-    { if (!rep) throw NullException();
-      if (!rep->IsValid()) throw InvalidObjectException(); 
-      return rep; }
-
-  bool operator==(const GameObjectPtr<T> &r) const
-  { return (rep == r.rep); }
-  bool operator==(T *r) const { return (rep == r); }
-  bool operator!=(const GameObjectPtr<T> &r) const 
-  { return (rep != r.rep); }
-  bool operator!=(T *r) const { return (rep != r); }
-
-  operator T *(void) const { return rep; }
-
-  bool operator!(void) const { return !rep; }
-};
 
 //
 // Forward declarations of classes defined in this file.
 //
-
 class GameOutcomeRep;
-typedef GameObjectPtr<GameOutcomeRep> GameOutcome;
+using GameOutcome = GameObjectPtr<GameOutcomeRep>;
 
 class GameActionRep;
-typedef GameObjectPtr<GameActionRep> GameAction;
+using GameAction = GameObjectPtr<GameActionRep>;
 
 class GameInfosetRep;
-typedef GameObjectPtr<GameInfosetRep> GameInfoset;
-class GameTreeInfosetRep;
+using GameInfoset = GameObjectPtr<GameInfosetRep>;
 
 class GameStrategyRep;
-typedef GameObjectPtr<GameStrategyRep> GameStrategy;
+using GameStrategy = GameObjectPtr<GameStrategyRep>;
+
+class GameSequenceRep;
+using GameSequence = GameObjectPtr<GameSequenceRep>;
 
 class GamePlayerRep;
-typedef GameObjectPtr<GamePlayerRep> GamePlayer;
-typedef Array<GamePlayerRep *> GamePlayers;
+using GamePlayer = GameObjectPtr<GamePlayerRep>;
 
 class GameNodeRep;
-typedef GameObjectPtr<GameNodeRep> GameNode;
-class GameTreeNodeRep;
+using GameNode = GameObjectPtr<GameNodeRep>;
+
+class GameSubgameRep;
+using GameSubgame = GameObjectPtr<GameSubgameRep>;
 
 class GameRep;
-typedef GameObjectPtr<GameRep> Game;
+using Game = std::shared_ptr<GameRep>;
 
-class PureStrategyProfileRep;
-class PureStrategyProfile;
+/// Attempt to view a game as a specific concrete representation, returning null if
+/// the game is not of that representation.
+template <class T> std::shared_ptr<T> As(const Game &p_game)
+{
+  return std::dynamic_pointer_cast<T>(p_game);
+}
 
-
-// 
+//
 // Forward declarations of classes defined elsewhere.
 //
+class PureStrategyProfile;
 template <class T> class MixedStrategyProfile;
-template <class T> class MixedBehaviorProfile;
 class StrategySupportProfile;
+
+template <class T> class MixedBehaviorProfile;
+struct TreeLayout;
+
+class SequenceContingencies;
 
 //=======================================================================
 //         Exceptions thrown from game representation classes
 //=======================================================================
 
 /// Exception thrown when an operation that is undefined is attempted
-class UndefinedException : public Exception {
+class UndefinedException final : public std::runtime_error {
 public:
-  UndefinedException(void) : Exception("Undefined operation on game") { }
-  UndefinedException(const std::string &s) : Exception(s) { }
-  virtual ~UndefinedException() throw() { }
+  UndefinedException() : std::runtime_error("Undefined operation on game") {}
+  explicit UndefinedException(const std::string &s) : std::runtime_error(s) {}
+  ~UndefinedException() noexcept override = default;
 };
 
 /// Exception thrown on an operation between incompatible objects
-class MismatchException : public Exception {
+class MismatchException : public std::runtime_error {
 public:
-  virtual ~MismatchException() throw() { }
-  const char *what(void) const throw()  
-  { return "Operation between objects in different games"; }
+  MismatchException() : std::runtime_error("Operation between objects in different games") {}
+  explicit MismatchException(const std::string &s) : std::runtime_error(s) {}
+  ~MismatchException() noexcept override = default;
+};
+
+/// Exception thrown when comparing different versions of a game
+class GameStructureChangedException : public std::runtime_error {
+public:
+  GameStructureChangedException()
+    : std::runtime_error("Game structure has changed since object was defined")
+  {
+  }
+  ~GameStructureChangedException() noexcept override = default;
 };
 
 /// Exception thrown on a parse error when reading a game savefile
-class InvalidFileException : public Exception {
+class InvalidFileException : public std::runtime_error {
 public:
-  InvalidFileException(void) : Exception("File not in a recognized format") { }
-  InvalidFileException(const std::string &s) : Exception(s) { } 
-  virtual ~InvalidFileException() throw() { }
+  InvalidFileException() : std::runtime_error("File not in a recognized format") {}
+  explicit InvalidFileException(const std::string &s) : std::runtime_error(s) {}
+  ~InvalidFileException() noexcept override = default;
 };
+
+//=======================================================================
+//                       Validation of labels
+//=======================================================================
+
+/// @brief Decodes p_text as UTF-8, appending each decoded code point to p_codepoints.
+///
+/// Validates well-formedness per the Unicode Standard's table of well-formed UTF-8
+/// byte sequences: rejects truncated sequences, overlong encodings, encoded
+/// surrogate code points (U+D800-DFFF), and code points beyond U+10FFFF.
+///
+/// @return true if p_text is well-formed UTF-8. On failure, p_codepoints holds
+///         only the code points decoded before the invalid byte was reached,
+///         and should not be used.
+inline bool DecodeUtf8(const std::string &p_text, std::vector<char32_t> &p_codepoints)
+{
+  p_codepoints.clear();
+  auto byte_at = [&p_text](size_t i) { return static_cast<unsigned char>(p_text[i]); };
+  size_t i = 0;
+  const size_t n = p_text.size();
+  while (i < n) {
+    const unsigned char b0 = byte_at(i);
+    char32_t codepoint;
+    size_t length;
+    unsigned char lo1 = 0x80, hi1 = 0xbf; // valid range for the first continuation byte
+    if (b0 <= 0x7f) {
+      p_codepoints.push_back(b0);
+      ++i;
+      continue;
+    }
+    else if (b0 >= 0xc2 && b0 <= 0xdf) {
+      length = 2;
+      codepoint = b0 & 0x1f;
+    }
+    else if (b0 == 0xe0) {
+      length = 3;
+      codepoint = b0 & 0x0f;
+      lo1 = 0xa0; // excludes overlong 3-byte encodings
+    }
+    else if ((b0 >= 0xe1 && b0 <= 0xec) || (b0 >= 0xee && b0 <= 0xef)) {
+      length = 3;
+      codepoint = b0 & 0x0f;
+    }
+    else if (b0 == 0xed) {
+      length = 3;
+      codepoint = b0 & 0x0f;
+      hi1 = 0x9f; // excludes encoded surrogate code points U+D800-DFFF
+    }
+    else if (b0 == 0xf0) {
+      length = 4;
+      codepoint = b0 & 0x07;
+      lo1 = 0x90; // excludes overlong 4-byte encodings
+    }
+    else if (b0 >= 0xf1 && b0 <= 0xf3) {
+      length = 4;
+      codepoint = b0 & 0x07;
+    }
+    else if (b0 == 0xf4) {
+      length = 4;
+      codepoint = b0 & 0x07;
+      hi1 = 0x8f; // excludes code points beyond U+10FFFF
+    }
+    else {
+      return false; // stray continuation byte, 0xc0/0xc1, or 0xf5-0xff
+    }
+    if (i + length > n) {
+      return false; // truncated sequence
+    }
+    for (size_t k = 1; k < length; k++) {
+      const unsigned char b = byte_at(i + k);
+      const unsigned char lo = (k == 1) ? lo1 : 0x80;
+      const unsigned char hi = (k == 1) ? hi1 : 0xbf;
+      if (b < lo || b > hi) {
+        return false;
+      }
+      codepoint = (codepoint << 6) | (b & 0x3f);
+    }
+    p_codepoints.push_back(codepoint);
+    i += length;
+  }
+  return true;
+}
+
+/// @brief Returns whether p_text is well-formed UTF-8.
+/// @sa DecodeUtf8
+inline bool IsWellFormedUtf8(const std::string &p_text)
+{
+  std::vector<char32_t> codepoints;
+  return DecodeUtf8(p_text, codepoints);
+}
+
+/// @brief Returns whether c is a Unicode space separator (category Zs).
+///
+/// This is the complete, fixed set of "blank" characters that a label treats as
+/// whitespace for the no-leading/trailing, single-whitespace-between-printables
+/// rule -- the same treatment historically given only to the literal ASCII space.
+/// The set has been stable across Unicode versions for a long time, so it is
+/// hardcoded here rather than obtained from a full Unicode character database.
+inline bool IsUnicodeSpaceSeparator(char32_t c)
+{
+  switch (c) {
+  case 0x0020: // SPACE
+  case 0x00a0: // NO-BREAK SPACE
+  case 0x1680: // OGHAM SPACE MARK
+  case 0x2000: // EN QUAD
+  case 0x2001: // EM QUAD
+  case 0x2002: // EN SPACE
+  case 0x2003: // EM SPACE
+  case 0x2004: // THREE-PER-EM SPACE
+  case 0x2005: // FOUR-PER-EM SPACE
+  case 0x2006: // SIX-PER-EM SPACE
+  case 0x2007: // FIGURE SPACE
+  case 0x2008: // PUNCTUATION SPACE
+  case 0x2009: // THIN SPACE
+  case 0x200a: // HAIR SPACE
+  case 0x202f: // NARROW NO-BREAK SPACE
+  case 0x205f: // MEDIUM MATHEMATICAL SPACE
+  case 0x3000: // IDEOGRAPHIC SPACE
+    return true;
+  default:
+    return false;
+  }
+}
+
+/// @brief Returns whether p_label is a valid label for a game object.
+///
+/// A valid label either is the empty string (denoting the absence of a label),
+/// or is well-formed UTF-8 containing no control characters (Unicode category Cc,
+/// i.e. U+0000-001F, U+007F, and U+0080-009F, plus the line/paragraph separators
+/// U+2028 and U+2029), begins and ends with a non-whitespace, non-control
+/// character, and contains no two consecutive whitespace characters.  "Whitespace"
+/// here means any Unicode space separator (category Zs; see IsUnicodeSpaceSeparator),
+/// not just the literal ASCII space -- so, for example, a label may not begin with
+/// a no-break space (U+00A0) any more than it may begin with an ordinary space.
+///
+/// @note Categories other than Cc/Zl/Zp/Zs (for example, format or private-use
+///       characters) are deliberately not excluded: labels exist for object
+///       identity and display, not as a place to police the full space of Unicode.
+inline bool IsValidLabel(const std::string &p_label)
+{
+  if (p_label.empty()) {
+    return true;
+  }
+  std::vector<char32_t> codepoints;
+  if (!DecodeUtf8(p_label, codepoints)) {
+    return false;
+  }
+  auto is_control = [](char32_t c) {
+    return c <= 0x1f || c == 0x7f || (c >= 0x80 && c <= 0x9f) || c == 0x2028 || c == 0x2029;
+  };
+  auto is_whitespace = [](char32_t c) { return IsUnicodeSpaceSeparator(c); };
+  auto is_printable = [&](char32_t c) { return !is_control(c) && !is_whitespace(c); };
+  if (!is_printable(codepoints.front()) || !is_printable(codepoints.back())) {
+    return false;
+  }
+  bool previous_was_whitespace = false;
+  for (const char32_t c : codepoints) {
+    if (is_whitespace(c)) {
+      if (previous_was_whitespace) {
+        return false; // two consecutive whitespace characters
+      }
+      previous_was_whitespace = true;
+    }
+    else if (is_printable(c)) {
+      previous_was_whitespace = false;
+    }
+    else {
+      return false; // control character
+    }
+  }
+  return true;
+}
+
+/// @brief Throws ValueException if p_label is not a valid label.
+/// @sa IsValidLabel
+inline void CheckLabel(const std::string &p_label)
+{
+  if (!IsValidLabel(p_label)) {
+    throw ValueException("Invalid label: a label must be well-formed UTF-8 text "
+                         "containing no control characters, must not begin or end "
+                         "with whitespace, and must not contain two consecutive "
+                         "whitespace characters");
+  }
+}
+
+/// @brief Returns whether p_text is valid free-form text (a game title or description).
+///
+/// Unlike labels, free-form text has no semantic role in the model (it does not
+/// identify an object or participate in any uniqueness constraint), so the only
+/// requirement is that it be well-formed UTF-8.
+/// @sa IsValidLabel
+inline bool IsValidText(const std::string &p_text) { return IsWellFormedUtf8(p_text); }
+
+/// @brief Throws ValueException if p_text is not valid free-form text.
+/// @sa IsValidText
+inline void CheckText(const std::string &p_text)
+{
+  if (!IsValidText(p_text)) {
+    throw ValueException("Invalid text: must be well-formed UTF-8");
+  }
+}
 
 //=======================================================================
 //             Classes representing objects in a game
 //=======================================================================
 
 /// This class represents an outcome in a game.  An outcome
-/// specifies a vector of payoffs to players.  Payoffs are specified
-/// using text strings, in either decimal or rational format.  All
-/// payoffs are treated as exact (that is, no conversion to floating
-/// point is done).
-class GameOutcomeRep : public GameObject  {
+/// specifies a vector of payoffs to players.
+class GameOutcomeRep : public std::enable_shared_from_this<GameOutcomeRep> {
+  friend class GameRep;
   friend class GameExplicitRep;
   friend class GameTreeRep;
   friend class GameTableRep;
-  friend class TableFileGameRep;
 
-private:
+  bool m_valid{true};
+  bool m_isNull;
   GameRep *m_game;
   int m_number;
   std::string m_label;
-  Array<Number> m_payoffs;
-  GameOutcome m_unrestricted;
+  std::map<GamePlayerRep *, Number> m_payoffs;
 
+public:
   /// @name Lifecycle
   //@{
   /// Creates a new outcome object, with payoffs set to zero
-  GameOutcomeRep(GameRep *p_game, int p_number);
-  virtual ~GameOutcomeRep() { }
+  GameOutcomeRep(GameRep *p_game, int p_number, const std::string &p_label, bool p_isNull = false);
+  ~GameOutcomeRep() = default;
   //@}
 
-public:
+  bool IsValid() const { return m_valid; }
+  void Invalidate() { m_valid = false; }
+  /// Returns whether this is the game's null outcome.
+  bool IsNull() const { return m_isNull; }
+
   /// @name Data access
   //@{
   /// Returns the strategic game on which the outcome is defined.
-  Game GetGame(void) const;
+  Game GetGame() const;
   /// Returns the index number of the outcome
-  int GetNumber(void) const { return m_number; }
+  int GetNumber() const { return m_number; }
 
   /// Returns the text label associated with the outcome
-  const std::string &GetLabel(void) const { return m_label; }
-  /// Sets the text label associated with the outcome 
-  void SetLabel(const std::string &p_label) { m_label = p_label; }
+  const std::string &GetLabel() const { return m_label; }
+  /// Sets the text label associated with the outcome
+  void SetLabel(const std::string &p_label);
 
-  /// Gets the payoff associated with the outcome to player 'pl'
-  template <class T> const T &GetPayoff(int pl) const 
-    { return (const T &) m_payoffs[pl]; }
-  /// Sets the payoff to player 'pl'
-  void SetPayoff(int pl, const std::string &p_value)
-  {
-    m_payoffs[pl] = p_value;
-    //m_game->ClearComputedValues();
-  }
-
-  /// Map the outcome to the corresponding outcome in the unrestricted game
-  GameOutcome Unrestrict(void) const 
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
+  /// Gets the payoff associated with the outcome to the player
+  template <class T> const T &GetPayoff(const GamePlayer &p_player) const;
+  /// Sets the payoff to the player
+  void SetPayoff(const GamePlayer &p_player, const Number &p_value);
   //@}
-};
-
-typedef GameObjectPtr<GameOutcomeRep> GameOutcome;
-
-/// An action at an information set in an extensive game
-class GameActionRep : public GameObject {
-protected:
-  GameAction m_unrestricted;
-
-  GameActionRep(void) : m_unrestricted(0) { }
-  virtual ~GameActionRep() { }
-
-public:
-  virtual int GetNumber(void) const = 0;
-  virtual GameInfoset GetInfoset(void) const = 0;
-
-  virtual const std::string &GetLabel(void) const = 0;
-  virtual void SetLabel(const std::string &p_label) = 0;
-
-  virtual bool Precedes(const GameNode &) const = 0;
-
-  virtual void DeleteAction(void) = 0;
-
-  /// Map the action to the corresponding action in the unrestricted game
-  GameAction Unrestrict(void) const 
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
-
-};
-
-/// An information set in an extensive game
-class GameInfosetRep : public GameObject {
-protected:
-  GameInfoset m_unrestricted;
- 
-  GameInfosetRep(void): m_unrestricted(0) { }
-  virtual ~GameInfosetRep() { }
-
-public:
-  virtual Game GetGame(void) const = 0;
-  virtual int GetNumber(void) const = 0;
-  
-  virtual GamePlayer GetPlayer(void) const = 0;
-  virtual void SetPlayer(GamePlayer p) = 0;
-
-  virtual bool IsChanceInfoset(void) const = 0;
-
-  virtual void SetLabel(const std::string &p_label) = 0;
-  virtual const std::string &GetLabel(void) const = 0;
-  
-  virtual GameAction InsertAction(GameAction p_where = 0) = 0;
-
-  /// @name Actions
-  //@{
-  /// Returns the number of actions available at the information set
-  virtual int NumActions(void) const = 0;
-  /// Returns the p_index'th action at the information set
-  virtual GameAction GetAction(int p_index) const = 0;
-  /// Returns a forward iterator over the available actions
-  //virtual GameActionIterator Actions(void) const = 0; 
-  //@}
-
-  virtual int NumMembers(void) const = 0;
-  virtual GameNode GetMember(int p_index) const = 0;
-
-  virtual bool Precedes(GameNode) const = 0;
-
-  virtual void SetActionProb(int i, const std::string &p_value) = 0;
-  virtual double GetActionProb(int pl, double) const = 0;
-  virtual Rational GetActionProb(int pl, const Rational &) const = 0;
-  virtual std::string GetActionProb(int pl, const std::string &) const = 0;
-  virtual void Reveal(GamePlayer) = 0;
-
-  /// Map the infoset to the corresponding infoset in the unrestricted game
-  GameInfoset Unrestrict(void) const 
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
 };
 
 /// \brief A strategy in a game.
 ///
 /// This class represents a strategy in a game.
-/// For strategic games, this object internally stores an offset.  
+/// For strategic games, this object internally stores an offset.
 /// This offset has the
 /// property that, for a strategy profile, adding the offsets of the
 /// strategies gives the index into the strategic game's table to
 /// find the outcome for that strategy profile, making payoff computation
 /// relatively efficient.
-class GameStrategyRep : public GameObject  {
+class GameStrategyRep : public std::enable_shared_from_this<GameStrategyRep> {
   friend class GameExplicitRep;
+  friend class GameRep;
   friend class GameTreeRep;
   friend class GameTableRep;
-  friend class GameAggRep;
-  friend class GameBagentRep;
+  friend class GameAGGRep;
+  friend class GameBAGGRep;
   friend class GamePlayerRep;
   friend class PureStrategyProfileRep;
   friend class TreePureStrategyProfileRep;
@@ -346,467 +402,615 @@ class GameStrategyRep : public GameObject  {
   template <class T> friend class MixedStrategyProfile;
   template <class T> friend class TableMixedStrategyProfileRep;
   template <class T> friend class MixedBehaviorProfile;
+  friend struct TreeSequenceLayout;
 
-private:
-  int m_number, m_id;
+  bool m_valid{true};
   GamePlayerRep *m_player;
-  long m_offset;
+  int m_number;
   std::string m_label;
-  Array<int> m_behav;
-  GameStrategy m_unrestricted;
+  std::map<GameInfosetRep *, int> m_behav;
 
+public:
   /// @name Lifecycle
   //@{
   /// Creates a new strategy for the given player.
-  GameStrategyRep(GamePlayerRep *p_player)
-    : m_number(0), m_id(0), m_player(p_player), m_offset(0L), m_unrestricted(0) { }
+  explicit GameStrategyRep(GamePlayerRep *p_player, int p_number, const std::string &p_label)
+    : m_player(p_player), m_number(p_number), m_label(p_label)
+  {
+    CheckLabel(p_label);
+  }
   //@}
 
-public:
+  bool IsValid() const { return m_valid; }
+  void Invalidate() { m_valid = false; }
+
   /// @name Data access
   //@{
   /// Returns the text label associated with the strategy
-  const std::string &GetLabel(void) const { return m_label; }
-  /// Sets the text label associated with the strategy
-  void SetLabel(const std::string &p_label) { m_label = p_label; }
-  
+  const std::string &GetLabel() const { return m_label; }
+
+  /// Returns the game on which the strategy is defined
+  Game GetGame() const;
   /// Returns the player for whom this is a strategy
-  GamePlayer GetPlayer(void) const;
+  GamePlayer GetPlayer() const;
   /// Returns the index of the strategy for its player
-  int GetNumber(void) const { return m_number; }
-  /// Returns the global number of the strategy in the game
-  int GetId(void) const { return m_id; }
+  int GetNumber() const { return m_number; }
 
-  /// Remove this strategy from the game
-  void DeleteStrategy(void);
-
-  /// Map the strategy to the corresponding strategy in the unrestricted game
-  GameStrategy Unrestrict(void) const
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
+  /// Returns the action specified by the strategy at the information set
+  GameAction GetAction(const GameInfoset &) const;
   //@}
 };
 
-typedef Array<GameStrategyRep *> GameStrategyArray;
-
 /// A player in a game
-class GamePlayerRep : public GameObject {
+class GamePlayerRep : public std::enable_shared_from_this<GamePlayerRep> {
+  friend class GameRep;
   friend class GameExplicitRep;
   friend class GameTreeRep;
   friend class GameTableRep;
-  friend class GameAggRep;
-  friend class GameBagentRep;
-  friend class GameBaggRep;
-  friend class GameTreeInfosetRep;
-  friend class GameStrategyRep;
-  friend class GameTreeNodeRep;
+  friend class GameAGGRep;
+  friend class GameBAGGRep;
+  friend class GameInfosetRep;
+  friend class GameNodeRep;
   friend class StrategySupportProfile;
+  friend class PureStrategyProfileRep;
   template <class T> friend class MixedBehaviorProfile;
   template <class T> friend class MixedStrategyProfile;
 
   /// @name Building reduced form strategies
   //@{
-  void MakeStrategy(void);
-  void MakeReducedStrats(GameTreeNodeRep *, GameTreeNodeRep *);
+  void MakeStrategy(const std::map<GameInfosetRep *, int> &);
+  void MakeReducedStrats(class GameNodeRep *, class GameNodeRep *,
+                         std::map<GameInfosetRep *, int> &,
+                         std::map<GameNodeRep *, GameNodeRep *> &ptr,
+                         std::map<GameNodeRep *, GameNodeRep *> &whichbranch);
   //@}
-  
-private:
+
+  bool m_valid{true};
   GameRep *m_game;
   int m_number;
   std::string m_label;
-  Array<GameTreeInfosetRep *> m_infosets;
-  GameStrategyArray m_strategies;
-  GamePlayer m_unrestricted;
-
-  GamePlayerRep(GameRep *p_game, int p_id) 
-    : m_game(p_game), m_number(p_id), m_unrestricted(0) { }
-  GamePlayerRep(GameRep *p_game, int p_id, int m_strats);
-  ~GamePlayerRep();
+  std::vector<std::shared_ptr<GameInfosetRep>> m_infosets;
+  std::vector<std::shared_ptr<GameStrategyRep>> m_strategies;
+  std::vector<std::shared_ptr<GameSequenceRep>> m_sequences;
 
 public:
-  int GetNumber(void) const { return m_number; }
-  Game GetGame(void) const;
-  
-  const std::string &GetLabel(void) const { return m_label; }
-  void SetLabel(const std::string &p_label) { m_label = p_label; }
-  
-  bool IsChance(void) const { return (m_number == 0); }
+  using Infosets = ElementCollection<GamePlayer, GameInfosetRep>;
+  using Strategies = ElementCollection<GamePlayer, GameStrategyRep>;
+  using Sequences = ElementCollection<GamePlayer, GameSequenceRep>;
+
+  GamePlayerRep(GameRep *p_game, int p_id, const std::string &p_label)
+    : m_game(p_game), m_number(p_id), m_label(p_label)
+  {
+  }
+  GamePlayerRep(GameRep *p_game, int p_id, const std::string &p_label, int p_strats);
+  ~GamePlayerRep();
+
+  bool IsValid() const { return m_valid; }
+  void Invalidate() { m_valid = false; }
+
+  int GetNumber() const { return m_number; }
+  Game GetGame() const;
+
+  const std::string &GetLabel() const { return m_label; }
+
+  bool IsChance() const { return (m_number == 0); }
 
   /// @name Information sets
   //@{
-  /// Returns the number of information sets at which the player makes a choice
-  int NumInfosets(void) const { return m_infosets.Length(); }
   /// Returns the p_index'th information set
   GameInfoset GetInfoset(int p_index) const;
+  /// Returns the information sets for the player
+  Infosets GetInfosets() const;
+  /// Validate that p_label is a valid label for an information set of this player,
+  /// disregarding any information sets in p_ignore.
+  void CheckInfosetLabel(const std::string &p_label,
+                         const std::set<const GameInfosetRep *> &p_ignore) const;
+  //@}
 
   /// @name Strategies
   //@{
-  /// Returns the number of strategies available to the player
-  int NumStrategies(void) const; 
   /// Returns the st'th strategy for the player
   GameStrategy GetStrategy(int st) const;
-  /// Returns the array of strategies available to the player
-  const GameStrategyArray &Strategies(void) const;
-  /// Creates a new strategy for the player
-  GameStrategy NewStrategy(void);
+  /// Returns the collection of strategies available to the player
+  Strategies GetStrategies() const;
+  /// Validate that p_label is a valid label for a strategy of this player,
+  /// disregarding any strategies in p_ignore.
+  void CheckStrategyLabel(const std::string &p_label,
+                          const std::set<const GameStrategyRep *> &p_ignore) const;
   //@}
 
-  /// Map the player to the corresponding player in the unrestricted game
-  GamePlayer Unrestrict(void) const 
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
-
-};
-
-/// A node in an extensive game
-class GameNodeRep : public GameObject {
-protected:
-  GameNode m_unrestricted;
-
-  GameNodeRep(void) : m_unrestricted(0) { }
-  virtual ~GameNodeRep() { }
-
-public:
-  virtual Game GetGame(void) const = 0; 
-
-  virtual const std::string &GetLabel(void) const = 0;
-  virtual void SetLabel(const std::string &p_label) = 0;
-
-  virtual int GetNumber(void) const = 0;
-  virtual int NumberInInfoset(void) const = 0;
-
-  virtual int NumChildren(void) const = 0;
-
-  virtual GameInfoset GetInfoset(void) const = 0;
-  virtual void SetInfoset(GameInfoset) = 0;
-  virtual GameInfoset LeaveInfoset(void) = 0;
-
-  virtual bool IsTerminal(void) const = 0;
-  virtual GamePlayer GetPlayer(void) const = 0;
-  virtual GameAction GetPriorAction(void) const = 0;
-  virtual GameNode GetChild(int i) const = 0;
-  virtual GameNode GetParent(void) const = 0;
-  virtual GameNode GetNextSibling(void) const = 0;
-  virtual GameNode GetPriorSibling(void) const = 0;
-
-  virtual GameOutcome GetOutcome(void) const = 0;
-  virtual void SetOutcome(const GameOutcome &p_outcome) = 0;
-
-  virtual bool IsSuccessorOf(GameNode from) const = 0;
-  virtual bool IsSubgameRoot(void) const = 0;
-
-  virtual void DeleteParent(void) = 0;
-  virtual void DeleteTree(void) = 0;
-
-  virtual void CopyTree(GameNode src) = 0;
-  virtual void MoveTree(GameNode src) = 0;
-
-  /// Create a separate Game object containing the subgame rooted at the node
-  virtual Game CopySubgame(void) const = 0;
-
-  virtual GameInfoset AppendMove(GamePlayer p_player, int p_actions) = 0;
-  virtual GameInfoset AppendMove(GameInfoset p_infoset) = 0;
-  virtual GameInfoset InsertMove(GamePlayer p_player, int p_actions) = 0;
-  virtual GameInfoset InsertMove(GameInfoset p_infoset) = 0;
-
-  /// Map the node to the corresponding node in the unrestricted game
-  GameNode Unrestrict(void) const 
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
-};
-
-
-/// This class represents a strategy profile on a strategic game.
-/// It specifies exactly one strategy for each player defined on the
-/// game.
-class PureStrategyProfileRep {
-  friend class GameTableRep;
-  friend class GameTreeRep;
-  friend class GameAggRep;
-  friend class PureStrategyProfile;
-
-protected:
-  Game m_nfg;
-  Array<GameStrategy> m_profile;
-
-  /// Construct a new strategy profile
-  PureStrategyProfileRep(const Game &p_game);
-
-  /// Create a copy of the strategy profile.
-  /// Caller is responsible for memory management of the created object.
-  virtual PureStrategyProfileRep *Copy(void) const = 0;
-
-public:
-  virtual ~PureStrategyProfileRep() { }
-  
-  /// @name Data access and manipulation
+  /// @name Sequences
   //@{
-  /// Get the index uniquely identifying the strategy profile
-  virtual long GetIndex(void) const { throw UndefinedException(); }
-  /// Get the strategy played by player pl  
-  const GameStrategy &GetStrategy(int pl) const { return m_profile[pl]; }
-  /// Get the strategy played by the player
-  const GameStrategy &GetStrategy(const GamePlayer &p_player) const
-    { return m_profile[p_player->GetNumber()]; }
-  /// Set the strategy for a player
-  virtual void SetStrategy(const GameStrategy &) = 0;
-
-  /// Get the outcome that results from the profile
-  virtual GameOutcome GetOutcome(void) const = 0;
-  /// Set the outcome that results from the profile
-  virtual void SetOutcome(GameOutcome p_outcome) = 0; 
-
-  /// Get the payoff to player pl that results from the profile
-  virtual Rational GetPayoff(int pl) const = 0;
-  /// Get the payoff to the player resulting from the profile
-  Rational GetPayoff(const GamePlayer &p_player) const
-  { return GetPayoff(p_player->GetNumber()); }
-  /// Get the value of playing strategy against the profile
-  virtual Rational GetStrategyValue(const GameStrategy &) const = 0;
-
-  /// Is the profile a pure strategy Nash equilibrium?
-  bool IsNash(void) const;
-
-  /// Is the profile a strict pure stategy Nash equilibrium?
-  bool IsStrictNash(void) const;
-
-  /// Is the specificed player playing a best response?
-  bool IsBestResponse(const GamePlayer &p_player) const;
-
-  /// Get the list of best response strategies for a player
-  List<GameStrategy> GetBestResponse(const GamePlayer &p_player) const;
-
-  /// Convert to a mixed strategy representation
-  MixedStrategyProfile<Rational> ToMixedStrategyProfile(void) const;
-
-  /// Map strategy profile to the unrestriction of the game
-  PureStrategyProfile Unrestrict(void) const;
-
+  /// Returns the collection of sequences available to the player
+  Sequences GetSequences() const;
   //@}
 };
 
-class PureStrategyProfile {
-private:
-  PureStrategyProfileRep *rep;
+enum class TraversalOrder { Preorder, Postorder };
 
+inline void ValidateDistribution(std::vector<Number>::const_iterator p_begin,
+                                 std::vector<Number>::const_iterator p_end,
+                                 const bool p_normalized)
+{
+  if (std::any_of(p_begin, p_end,
+                  [](const Number &x) { return static_cast<Rational>(x) < Rational(0); })) {
+    throw ValueException("Probabilities must be non-negative numbers");
+  }
+  if (!p_normalized) {
+    return;
+  }
+  if (std::accumulate(p_begin, p_end, Rational(0), [](const Rational &s, const Number &n) {
+        return s + static_cast<Rational>(n);
+      }) != Rational(1)) {
+    throw ValueException("Probabilities must sum to exactly one");
+  }
+}
+
+inline void ValidateDistribution(const Array<Number> &p_probs, const bool p_normalized = true)
+{
+  ValidateDistribution(p_probs.begin(), p_probs.end(), p_normalized);
+}
+
+inline void ValidateDistribution(const std::vector<Number> &p_probs,
+                                 const bool p_normalized = true)
+{
+  ValidateDistribution(p_probs.begin(), p_probs.end(), p_normalized);
+}
+
+class CartesianProductSpace {
 public:
-  PureStrategyProfile(const PureStrategyProfile &r) : rep(r.rep->Copy())  { }
-  PureStrategyProfile(PureStrategyProfileRep *p_rep) : rep(p_rep) { }
-  ~PureStrategyProfile() { delete rep; }
-
-  PureStrategyProfile &operator=(const PureStrategyProfile &r) 
-    {
-      if (&r != this) {
-	delete rep;
-	rep = r.rep->Copy();
-      }
-      return *this;
-    }
-
-  PureStrategyProfileRep *operator->(void) const { return rep; }
-  operator PureStrategyProfileRep *(void) const { return rep; }
-};
-    
-
-/// This class represents a behavior profile on an extensive game.
-/// It specifies exactly one strategy for each information set in the
-/// game.
-class PureBehaviorProfile {
-private:
-  Game m_efg;
-  Array<Array<GameAction> > m_profile;
-
-public:
-  /// @name Lifecycle
-  //@{
-  /// Construct a new behavior profile on the specified game
-  PureBehaviorProfile(Game);
-
-  /// @name Data access and manipulation
-  //@{
-  /// Get the action played at an information set
-  GameAction GetAction(const GameInfoset &) const;
-
-  /// Set the action played at an information set
-  void SetAction(const GameAction &);
-   
-  /// Get the payoff to player pl that results from the profile
-  template <class T> T GetPayoff(int pl) const;
-  /// Get the payoff to the player that results from the profile
-  template <class T> T GetPayoff(const GamePlayer &p_player) const
-    { return GetPayoff<T>(p_player->GetNumber()); }
-  /// Get the payoff to player pl conditional on reaching a node
-  template <class T> T GetPayoff(const GameNode &, int pl) const;
-  /// Get the payoff to playing the action, conditional on the profile
-  template <class T> T GetPayoff(const GameAction &) const;
-
-  /// Is the profile a pure strategy agent Nash equilibrium?
-  bool IsAgentNash(void) const;
-
-  /// Convert to a mixed behavior representation
-  MixedBehaviorProfile<Rational> ToMixedBehaviorProfile(void) const;
-  //@}
+  std::vector<int> m_radices;
+  std::vector<long> m_strides;
 };
 
+class CartesianSubset {
+public:
+  const CartesianProductSpace *m_space{nullptr};
+  std::vector<std::vector<int>> m_allowedDigits;
+};
+
+template <class T> class CartesianTensor {
+public:
+  const CartesianProductSpace *m_space{nullptr};
+  std::vector<T> m_data;
+};
 
 /// This is the class for representing an arbitrary finite game.
-class GameRep : public GameObject {
-  friend class GameTreeInfosetRep;
+class GameRep : public std::enable_shared_from_this<GameRep> {
+  friend class GameOutcomeRep;
+  friend class GameNodeRep;
+  friend class GameInfosetRep;
   friend class GamePlayerRep;
-  friend class GameTreeNodeRep;
   friend class PureStrategyProfileRep;
   friend class TablePureStrategyProfileRep;
+  friend class StrategySupportProfile;
   template <class T> friend class MixedBehaviorProfile;
   template <class T> friend class MixedStrategyProfile;
+  template <class T> friend class MixedStrategyProfileRep;
   template <class T> friend class TableMixedStrategyProfileRep;
 
 protected:
+  std::vector<std::shared_ptr<GamePlayerRep>> m_players;
+  std::vector<std::shared_ptr<GameOutcomeRep>> m_outcomes;
+  /// The outcomes of the game indexed by label; outcome labels are unique within a game
+  std::unordered_map<std::string, GameOutcomeRep *> m_outcomeLabels;
+  /// The game's null outcome, shared by every node or contingency with no outcome attached.
+  std::shared_ptr<GameOutcomeRep> m_nullOutcome;
+  mutable CartesianProductSpace m_pureStrategies;
   std::string m_title, m_comment;
+  unsigned int m_version{0};
 
-  GameRep(void) { }
+  GameRep() { m_nullOutcome = std::make_shared<GameOutcomeRep>(this, 0, "", true); }
 
   /// @name Managing the representation
   //@{
-  /// Renumber all game objects in a canonical way
-  virtual void Canonicalize(void) { }  
-  /// Clear out any computed values
-  virtual void ClearComputedValues(void) const { }
-  /// Build any computed values anew
-  virtual void BuildComputedValues(void) { }
-  /// Have computed values been built?
-  virtual bool HasComputedValues(void) const { return false; }
+  /// Mark that the content of the game has changed
+  void IncrementVersion() { m_version++; }
+  void IndexStrategies() const;
+  /// Validate that p_label is a nonempty, valid, unique label for a player of this game,
+  /// ignoring the labels of the players in p_ignore.
+  void CheckPlayerLabel(const std::string &p_label,
+                        const std::set<const GamePlayerRep *> &p_ignore = {}) const;
+  /// Validate that p_label is a nonempty, valid, unique label for an outcome of this game.
+  void CheckOutcomeLabel(const std::string &p_label,
+                         const std::set<const GameOutcomeRep *> &p_ignore = {}) const;
+  /// Invalidate and remove the given outcomes from the game, renumbering the survivors.
+  void EraseOutcomes(const std::set<const GameOutcomeRep *> &p_outcomes);
+  /// Append a newly created outcome to the outcomes of the game.
+  void AddOutcome(const std::shared_ptr<GameOutcomeRep> &p_outcome);
+  /// Rebuild the index of outcome labels from the outcomes of the game.
+  void IndexOutcomeLabels();
+  /// Remove the entry for p_outcome's label from the index, if it refers to p_outcome.
+  void UnindexOutcomeLabel(const GameOutcomeRep *p_outcome);
   //@}
 
+  /// Hooks for derived classes to update lazily-computed orderings if required
+  virtual void EnsureNodeOrdering() const {}
+  virtual void EnsureInfosetOrdering() const {}
 
 public:
+  using Players = ElementCollection<Game, GamePlayerRep>;
+  using Outcomes = ElementCollection<Game, GameOutcomeRep>;
+
+  enum class DFSCallbackResult {
+    Continue, // continue with normal traversal
+    Prune,    // skip the subtree under this node
+    Stop      // end traversal early now
+  };
+
+  /// @brief Perform a depth-first traversal of the game tree.
+  ///
+  /// WalkDFS performs a depth-first traversal of the game tree starting at
+  /// the node @p p_root. Traversal order (preorder or postorder) controls when
+  /// the OnVisit() hook is called relative to the other callbacks.
+  ///
+  /// @tparam Callback A callback type implementing the required interface (see below)).
+  /// @param p_game The game object being traversed
+  /// @param p_root The root node of the subtree to traverse.
+  /// @param p_order Controls when OnVisit() is invoked:
+  ///   - TraversalOrder::Preorder: OnVisit() is called when a node is first entered.
+  ///   - TraversalOrder::Postorder: OnVisit() is called after all children have been processed.
+  /// @param p_callback The callback object
+  ///
+  /// The callback object must implement the following four member functions:
+  ///
+  /// @code
+  /// DFSCallbackResult OnEnter(GameNode node, int depth);
+  /// DFSCallbackResult OnAction(GameNode parent, GameNode child, int depth);
+  /// DFSCallbackResult OnExit(GameNode node, int depth);
+  /// void              OnVisit(GameNode node, int depth);
+  /// @endcode
+  ///
+  /// OnEnter(node, depth)
+  /// --------------------
+  /// Invoked exactly once for each node, when the node is first reached during DFS.
+  /// @p depth is the depth of the node relative to @p p_root (where the root is defined
+  /// to have depth 0).
+  ///
+  /// OnAction(parent, child, depth)
+  /// ------------------------------
+  /// Invoked immediately before descending from @p parent to one of its children.
+  /// @p depth is the depth of the parent node.
+  ///
+  /// OnExit(node, depth)
+  /// -------------------
+  /// Invoked exactly once for each node, after all of its children have been
+  /// processed (or skipped).  @p is the depth of the node.
+  ///
+  /// OnVisit(node, depth)
+  /// --------------------
+  /// Invoked exactly once per node, at a time determined by @p p_order:
+  /// - Preorder: called during OnEnter(), before any children are visited.
+  /// - Postorder: called after OnExit(), once all children are complete.
+  ///
+  template <class Callback>
+  static void WalkDFS(const Game &p_game, const GameNode &p_root, TraversalOrder p_order,
+                      Callback &p_callback);
+
+  class Nodes;
+
   /// @name Lifecycle
   //@{
   /// Clean up the game
-  virtual ~GameRep() { }
+  virtual ~GameRep();
+
   /// Create a copy of the game, as a new game
-  virtual Game Copy(void) const = 0;
+  virtual Game Copy() const = 0;
   //@}
 
   /// @name General data access
   //@{
-  /// Returns true if the game has a game tree representation
-  virtual bool IsTree(void) const = 0;
-
-  /// Returns true if the game has a action-graph game representation
-  virtual bool IsAgg(void) const { return false; }
-
-  /// Returns true if the game is a restriction of a more general game
-  virtual bool IsRestriction(void) const { return false; }
-  /// Returns the unrestricted version of the game
-  virtual Game Unrestrict(void) const { throw UndefinedException(); }
-
   /// Get the text label associated with the game
-  virtual const std::string &GetTitle(void) const { return m_title; }
+  virtual const std::string &GetTitle() const { return m_title; }
   /// Set the text label associated with the game
-  virtual void SetTitle(const std::string &p_title) { m_title = p_title; }
+  virtual void SetTitle(const std::string &p_title)
+  {
+    CheckText(p_title);
+    m_title = p_title;
+  }
 
   /// Get the text comment associated with the game
-  virtual const std::string &GetComment(void) const { return m_comment; }
+  virtual const std::string &GetDescription() const { return m_comment; }
   /// Set the text comment associated with the game
-  virtual void SetComment(const std::string &p_comment) { m_comment = p_comment; }
+  virtual void SetDescription(const std::string &p_comment)
+  {
+    CheckText(p_comment);
+    m_comment = p_comment;
+  }
+
+  /// Return the version number of the game.  The version is incremented after each
+  /// substantive change to the game (i.e. not merely involving labels)
+  unsigned int GetVersion() const { return m_version; }
 
   /// Returns true if the game is constant-sum
-  virtual bool IsConstSum(void) const = 0; 
-  /// Returns the smallest payoff in any outcome of the game
-  virtual Rational GetMinPayoff(int pl = 0) const = 0;
-  /// Returns the largest payoff in any outcome of the game
-  virtual Rational GetMaxPayoff(int pl = 0) const = 0;
+  virtual bool IsConstSum() const = 0;
+  /// Returns the smallest payoff to any player in any play of the game
+  virtual Rational GetMinPayoff() const = 0;
+  /// Returns the smallest payoff to the player in any play of the game
+  virtual Rational GetPlayerMinPayoff(const GamePlayer &p_player) const = 0;
+  /// Returns the largest payoff to any player in any play of the game
+  virtual Rational GetMaxPayoff() const = 0;
+  /// Returns the largest payoff to the player in any play of the game
+  virtual Rational GetPlayerMaxPayoff(const GamePlayer &p_player) const = 0;
 
-  /// Returns true if the game is perfect recall.  If not, the specified
-  /// a pair of violating information sets is returned in the parameters.  
-  virtual bool IsPerfectRecall(GameInfoset &, GameInfoset &) const = 0;
+  /// Returns the set of terminal nodes which are descendants of node
+  virtual std::vector<GameNode> GetPlays(GameNode node) const { throw UndefinedException(); }
+  /// Returns the set of terminal nodes which are descendants of members of an infoset
+  virtual std::vector<GameNode> GetPlays(GameInfoset infoset) const { throw UndefinedException(); }
+  /// Returns the set of terminal nodes which are descendants of members of an action
+  virtual std::vector<GameNode> GetPlays(GameAction action) const { throw UndefinedException(); }
+
   /// Returns true if the game is perfect recall
-  virtual bool IsPerfectRecall(void) const
-  { GameInfoset s, t; return IsPerfectRecall(s, t); }
+  virtual bool IsPerfectRecall() const = 0;
+  /// Returns true if the player has perfect recall
+  virtual bool HasPerfectRecall(const GamePlayer &p_player) const
+  {
+    if (p_player->GetGame().get() != this) {
+      throw MismatchException();
+    }
+    return true;
+  }
+  /// Returns true if the information set is absent-minded
+  virtual bool IsAbsentMinded(const GameInfoset &p_infoset) const;
+  /// Returns (infoset, node) pairs where the node is a reentry of an absent-minded infoset
+  virtual std::vector<std::pair<GameInfoset, GameNode>> GetAbsentMindedReentries() const
+  {
+    return {};
+  }
+  /// Returns the flattened structure of the game tree for the current version of the game.
+  /// The layout is shared by all callers until the game is next modified.
+  virtual std::shared_ptr<const TreeLayout> GetTreeLayout() const { throw UndefinedException(); }
+  /// Returns a list of all subgame roots in the game
+  virtual std::vector<GameSubgame> GetSubgames() const { throw UndefinedException(); }
+  /// Returns the smallest subgame containing the information set
+  virtual GameSubgame GetMinimalSubgame(const GameInfoset &) const { throw UndefinedException(); }
+
   //@}
 
   /// @name Writing data files
   //@{
   /// Write the game to a savefile in the specified format.
-  virtual void Write(std::ostream &p_stream,
-		     const std::string &p_format="native") const
-  { throw UndefinedException(); }
+  virtual void Write(std::ostream &p_stream, const std::string &p_format = "native") const
+  {
+    throw UndefinedException();
+  }
+  /// Write the game in .efg format to the specified stream
+  virtual void WriteEfgFile(std::ostream &, const GameNode &subtree = nullptr) const
+  {
+    throw UndefinedException();
+  }
   /// Write the game to a file in .nfg payoff format.
   virtual void WriteNfgFile(std::ostream &p_stream) const;
   //@}
 
-  /// @name Dimensions of the game
-  //@{
-  /// The number of actions in each information set
-  virtual PVector<int> NumActions(void) const = 0;
-  /// The number of members in each information set
-  virtual PVector<int> NumMembers(void) const = 0;
-  /// The number of strategies for each player
-  virtual Array<int> NumStrategies(void) const = 0;
-  /// Gets the i'th strategy in the game, numbered globally
-  virtual GameStrategy GetStrategy(int p_index) const = 0;
-  /// Returns the number of strategy contingencies in the game
-  virtual int NumStrategyContingencies(void) const = 0;
-  /// Returns the total number of actions in the game
-  virtual int BehavProfileLength(void) const = 0;
-  /// Returns the total number of strategies in the game
-  virtual int MixedProfileLength(void) const = 0;
-  //@}
-
-  virtual PureStrategyProfile NewPureStrategyProfile(void) const = 0;
+  /// Append a move for p_player at p_node, with actions labeled per p_actions.
+  virtual GameInfoset AppendMove(GameNode p_node, GamePlayer p_player,
+                                 const std::vector<std::string> &p_actions)
+  {
+    throw UndefinedException();
+  }
+  virtual GameInfoset AppendMove(GameNode p_node, GameInfoset p_infoset)
+  {
+    throw UndefinedException();
+  }
+  /// Insert a move for p_player prior to p_node, with p_actions actions bearing
+  /// automatically generated, sequentially numbered labels.
+  virtual GameInfoset InsertMove(GameNode p_node, GamePlayer p_player, int p_actions)
+  {
+    throw UndefinedException();
+  }
+  /// Insert a move for p_player prior to p_node, with actions labeled per p_actions.
+  virtual GameInfoset InsertMove(GameNode p_node, GamePlayer p_player,
+                                 const std::vector<std::string> &p_actions)
+  {
+    throw UndefinedException();
+  }
+  virtual GameInfoset InsertMove(GameNode p_node, GameInfoset p_infoset)
+  {
+    throw UndefinedException();
+  }
+  /// Add a chance move for p_actions, with distribution p_probs, at terminal p_node.
+  virtual GameInfoset AppendEvent(GameNode p_node, const std::vector<std::string> &p_actions,
+                                  const std::vector<Number> &p_probs)
+  {
+    throw UndefinedException();
+  }
+  /// Insert a chance move for p_actions, with distribution p_probs, prior to p_node.
+  virtual GameInfoset InsertEvent(GameNode p_node, const std::vector<std::string> &p_actions,
+                                  const std::vector<Number> &p_probs)
+  {
+    throw UndefinedException();
+  }
+  virtual void DeleteParent(GameNode) { throw UndefinedException(); }
+  virtual void DeleteTree(GameNode) { throw UndefinedException(); }
+  virtual void CopyTree(GameNode dest, GameNode src) { throw UndefinedException(); }
+  /// Create a separate Game object containing the subgame rooted at the node
+  virtual Game CopySubgame(GameNode) const { throw UndefinedException(); }
+  virtual void MoveTree(GameNode dest, GameNode src) { throw UndefinedException(); }
+  virtual GameInfoset MakeInfoset(const std::vector<GameNode> &, const GamePlayer &,
+                                  const std::string &)
+  {
+    throw UndefinedException();
+  }
+  /// Reveals the move made at p_infoset to p_player: splits p_player's information sets
+  /// so that any two nodes reached via different actions at p_infoset are distinguished.
+  virtual void Reveal(GameInfoset p_infoset, GamePlayer p_player) { throw UndefinedException(); }
+  /// Simultaneously reassign action labels at an information set.
+  /// Keys of p_labels are current action labels; values are their replacements.
+  virtual void RelabelActions(const GameInfoset &, const std::map<std::string, std::string> &)
+  {
+    throw UndefinedException();
+  }
+  /// Declare the ordered action list of a personal player's move.
+  virtual void SetMoveActions(const GameInfoset &, const std::vector<std::string> &)
+  {
+    throw UndefinedException();
+  }
+  /// Declare the ordered action list of an event, together with the probability
+  /// distribution over its actions.
+  virtual void SetEventActions(const GameInfoset &, const std::vector<std::string> &,
+                               const std::vector<Number> &)
+  {
+    throw UndefinedException();
+  }
+  virtual PureStrategyProfile NewPureStrategyProfile() const = 0;
   virtual MixedStrategyProfile<double> NewMixedStrategyProfile(double) const = 0;
-  virtual MixedStrategyProfile<Rational> NewMixedStrategyProfile(const Rational &) const = 0; 
-  virtual MixedStrategyProfile<double> NewMixedStrategyProfile(double, const StrategySupportProfile&) const = 0;
-  virtual MixedStrategyProfile<Rational> NewMixedStrategyProfile(const Rational &, const StrategySupportProfile&) const = 0;
+  virtual MixedStrategyProfile<Rational> NewMixedStrategyProfile(const Rational &) const = 0;
+
+  virtual MixedStrategyProfile<double>
+  NewMixedStrategyProfile(double, const StrategySupportProfile &) const = 0;
+  virtual MixedStrategyProfile<Rational>
+  NewMixedStrategyProfile(const Rational &, const StrategySupportProfile &) const = 0;
 
   /// @name Players
   //@{
   /// Returns the number of players in the game
-  virtual int NumPlayers(void) const = 0;
+  size_t NumPlayers() const { return m_players.size(); }
   /// Returns the pl'th player in the game
-  virtual GamePlayer GetPlayer(int pl) const = 0;
-  /// Returns the set of players in the game 
-  virtual const GamePlayers &Players(void) const = 0;
+  GamePlayer GetPlayer(int pl) const { return m_players.at(pl - 1)->shared_from_this(); }
+  /// Returns the set of players in the game
+  Players GetPlayers() const
+  {
+    return Players(std::const_pointer_cast<GameRep>(shared_from_this()), &m_players);
+  }
   /// Returns the chance (nature) player
-  virtual GamePlayer GetChance(void) const = 0;
-  /// Creates a new player in the game, with no moves
-  virtual GamePlayer NewPlayer(void) = 0;
+  virtual GamePlayer GetChance() const = 0;
+  auto GetPlayersWithChance() const { return prepend_value(GetChance(), GetPlayers()); }
+  /// Reassign player labels. Keys of p_labels are current labels; values are their replacements.
+  void RelabelPlayers(const std::map<std::string, std::string> &p_labels);
+  /// Declare the ordered list of players of the game.
+  virtual void SetPlayers(const std::vector<std::string> &) { throw UndefinedException(); }
+  //@}
+
+  /// @name Dimensions of the game
+  //@{
+  using Strategies =
+      NestedElementCollection<Game, &GameRep::GetPlayers, &GamePlayerRep::GetStrategies>;
+  /// Returns the set of strategies in the game
+  Strategies GetStrategies() const
+  {
+    EnsureStrategies();
+    return Strategies(std::const_pointer_cast<GameRep>(this->shared_from_this()));
+  }
+  /// Gets the i'th strategy in the game, numbered globally starting from 1
+  GameStrategy GetStrategy(const std::size_t p_index) const
+  {
+    const auto strategies = GetStrategies();
+    if (p_index < 1 || p_index > strategies.size()) {
+      throw std::out_of_range("Strategy index out of range");
+    }
+    return *std::next(strategies.begin(), p_index - 1);
+  }
+  /// Simultaneously reassign strategy labels for a player: keys are current labels.
+  /// Keys of p_labels are current action labels; values are their replacements.
+  virtual void RelabelStrategies(const GamePlayer &, const std::map<std::string, std::string> &)
+  {
+    throw UndefinedException();
+  }
+  /// Declare the ordered list of strategies of a player.
+  virtual void SetStrategies(const GamePlayer &, const std::vector<std::string> &)
+  {
+    throw UndefinedException();
+  }
+  /// Returns the total number of actions in the game
+  virtual int BehavProfileLength() const = 0;
   //@}
 
   /// @name Information sets
   //@{
+  using Infosets =
+      NestedElementCollection<Game, &GameRep::GetPlayers, &GamePlayerRep::GetInfosets>;
+
   /// Returns the iset'th information set in the game (numbered globally)
-  virtual GameInfoset GetInfoset(int iset) const = 0;
-  /// Returns an array with the number of information sets per personal player
-  virtual Array<int> NumInfosets(void) const = 0;
-  /// Returns the act'th action in the game (numbered globally)
-  virtual GameAction GetAction(int act) const = 0;
+  virtual GameInfoset GetInfoset(int iset) const { throw UndefinedException(); }
+  /// Returns the set of information sets in the game
+  virtual Infosets GetInfosets() const
+  {
+    return Infosets(std::const_pointer_cast<GameRep>(this->shared_from_this()));
+  }
+
+  /// Returns the set of actions taken by the infoset's owner before reaching this infoset
+  virtual std::set<GameAction> GetOwnPriorActions(const GameInfoset &p_infoset) const
+  {
+    throw UndefinedException();
+  }
   //@}
 
   /// @name Outcomes
   //@{
-  /// Returns the number of outcomes defined in the game
-  virtual int NumOutcomes(void) const = 0;
   /// Returns the index'th outcome defined in the game
-  virtual GameOutcome GetOutcome(int index) const = 0;
-  /// Creates a new outcome in the game
-  virtual GameOutcome NewOutcome(void) = 0;
-  /// Deletes the specified outcome from the game
-  virtual void DeleteOutcome(const GameOutcome &) = 0;
+  GameOutcome GetOutcome(int index) const { return m_outcomes.at(index - 1); }
+  /// Returns the set of outcomes in the game
+  Outcomes GetOutcomes() const
+  {
+    return Outcomes(std::const_pointer_cast<GameRep>(shared_from_this()), &m_outcomes);
+  }
+  /// Creates an outcome with the given payoffs and label for the specified nodes.
+  virtual GameOutcome MakeOutcome(const std::vector<GameNode> &, const std::vector<Number> &,
+                                  const std::string &)
+  {
+    throw UndefinedException();
+  }
+  /// Creates an outcome with the given payoffs and label for the specified contingencies.
+  virtual GameOutcome MakeOutcome(const std::vector<std::vector<GameStrategy>> &,
+                                  const std::vector<Number> &, const std::string &)
+  {
+    throw UndefinedException();
+  }
+  /// Resets the outcome at the specified nodes to the null outcome.
+  virtual void MakeOutcomeNull(const std::vector<GameNode> &) { throw UndefinedException(); }
+  /// Resets the outcome at the specified contingencies to the null outcome.
+  virtual void MakeOutcomeNull(const std::vector<std::vector<GameStrategy>> &)
+  {
+    throw UndefinedException();
+  }
+  /// Reassign outcome labels. Keys of p_labels are current labels; values are their
+  /// replacements.
+  void RelabelOutcomes(const std::map<std::string, std::string> &p_labels);
   //@}
 
   /// @name Nodes
   //@{
   /// Returns the root node of the game
-  virtual GameNode GetRoot(void) const = 0;
+  virtual GameNode GetRoot() const = 0;
+  /// Returns a range that can be used to iterate over the nodes of the game
+  Nodes GetNodes(TraversalOrder p_traversal = TraversalOrder::Preorder) const;
+  auto GetTerminalNodes() const;
+  auto GetNonterminalNodes(TraversalOrder p_traversal = TraversalOrder::Preorder) const;
   /// Returns the number of nodes in the game
-  virtual int NumNodes(void) const = 0;
+  virtual size_t NumNodes() const = 0;
+  /// Returns the number of non-terminal nodes in the game
+  virtual size_t NumNonterminalNodes() const = 0;
+  /// Returns the last action taken by the node's owner before reaching this node
+  virtual GameAction GetOwnPriorAction(const GameNode &p_node) const
+  {
+    throw UndefinedException();
+  }
+  //@}
+
+  /// @name Modification
+  //@{
+  /// Form the collection of nodes into a single event carrying the given
+  /// probability distribution over its actions.  The nodes need not currently be
+  /// chance nodes; personal decision nodes are converted.
+  virtual GameInfoset MakeEvent(const std::vector<GameNode> &, const std::vector<Number> &,
+                                const std::string &)
+  {
+    throw UndefinedException();
+  }
+  //@}
+
+  /// Ensure the reduced-form strategies have been derived and indexed
+  virtual void EnsureStrategies() const {}
+  /// Ensure sequences have been computed
+  virtual void EnsureSequences() const { throw UndefinedException(); }
+
+  /// @name Sequences
+  //@{
+  /// Returns an iterator over every combination of one sequence per player
+  SequenceContingencies GetSequenceContingencies() const;
   //@}
 };
-
-typedef GameObjectPtr<GameRep> Game;
-
-/// Factory function to create new game tree
-Game NewTree(void);
-/// Factory function to create new game table
-Game NewTable(const Array<int> &p_dim, bool p_sparseOutcomes = false);
 
 //=======================================================================
 //          Inline members of game representation classes
@@ -815,33 +1019,202 @@ Game NewTable(const Array<int> &p_dim, bool p_sparseOutcomes = false);
 // These must be postponed to here in the file because they require
 // all classes to be defined.
 
-inline Game GameOutcomeRep::GetGame(void) const { return m_game; }
+inline Game GameOutcomeRep::GetGame() const { return m_game->shared_from_this(); }
+inline void GameOutcomeRep::SetLabel(const std::string &p_label)
+{
+  if (m_isNull) {
+    throw ValueException("The null outcome's label cannot be changed");
+  }
+  if (p_label == m_label) {
+    return;
+  }
+  m_game->CheckOutcomeLabel(p_label);
+  m_game->UnindexOutcomeLabel(this);
+  m_label = p_label;
+  m_game->m_outcomeLabels[m_label] = this;
+}
 
-inline GamePlayer GameStrategyRep::GetPlayer(void) const { return m_player; }
+template <class T> const T &GameOutcomeRep::GetPayoff(const GamePlayer &p_player) const
+{
+  if (m_isNull) {
+    static const Number kZeroPayoff;
+    return static_cast<const T &>(kZeroPayoff);
+  }
+  try {
+    return static_cast<const T &>(m_payoffs.at(p_player.get()));
+  }
+  catch (const std::out_of_range &) {
+    throw MismatchException();
+  }
+}
 
-inline Game GamePlayerRep::GetGame(void) const { return m_game; }
-inline int GamePlayerRep::NumStrategies(void) const 
-{ m_game->BuildComputedValues(); return m_strategies.Length(); }
-inline GameStrategy GamePlayerRep::GetStrategy(int st) const 
-{ m_game->BuildComputedValues(); return m_strategies[st]; }
-inline const GameStrategyArray &GamePlayerRep::Strategies(void) const
-{ m_game->BuildComputedValues(); return m_strategies; }
+template <> inline const Number &GameOutcomeRep::GetPayoff(const GamePlayer &p_player) const
+{
+  if (m_isNull) {
+    static const Number kZeroPayoff;
+    return kZeroPayoff;
+  }
+  try {
+    return m_payoffs.at(p_player.get());
+  }
+  catch (const std::out_of_range &) {
+    throw MismatchException();
+  }
+}
 
-template<> inline double PureBehaviorProfile::GetPayoff(int pl) const
-{ return GetPayoff<double>(m_efg->GetRoot(), pl); }
+inline void GameOutcomeRep::SetPayoff(const GamePlayer &p_player, const Number &p_value)
+{
+  if (m_isNull) {
+    throw UndefinedException("Payoffs cannot be set on the null outcome");
+  }
+  if (p_player->GetGame() != GetGame()) {
+    throw MismatchException();
+  }
+  m_payoffs[p_player.get()] = p_value;
+  m_game->IncrementVersion();
+}
 
-template<> inline Rational PureBehaviorProfile::GetPayoff(int pl) const
-{ return GetPayoff<Rational>(m_efg->GetRoot(), pl); }
+inline GamePlayer GameStrategyRep::GetPlayer() const { return m_player->shared_from_this(); }
+inline Game GameStrategyRep::GetGame() const { return m_player->GetGame(); }
 
-template<> inline std::string PureBehaviorProfile::GetPayoff(int pl) const
-{ return lexical_cast<std::string>(GetPayoff<Rational>(m_efg->GetRoot(), pl)); }
+inline void
+GamePlayerRep::CheckStrategyLabel(const std::string &p_label,
+                                  const std::set<const GameStrategyRep *> &p_ignore) const
+{
+  if (p_label.empty()) {
+    throw ValueException("Strategy label must not be empty");
+  }
+  CheckLabel(p_label);
+  for (const auto &strategy : m_strategies) {
+    if (p_ignore.count(strategy.get()) == 0 && strategy->GetLabel() == p_label) {
+      throw ValueException("Strategy label must be unique for the player");
+    }
+  }
+}
+
+inline void GameRep::CheckOutcomeLabel(const std::string &p_label,
+                                       const std::set<const GameOutcomeRep *> &p_ignore) const
+{
+  if (p_label.empty()) {
+    throw ValueException("Outcome label must not be empty");
+  }
+  CheckLabel(p_label);
+  if (const auto entry = m_outcomeLabels.find(p_label);
+      entry != m_outcomeLabels.end() && !p_ignore.contains(entry->second)) {
+    throw ValueException("Outcome label must be unique within the game");
+  }
+}
+inline void GameRep::AddOutcome(const std::shared_ptr<GameOutcomeRep> &p_outcome)
+{
+  m_outcomes.push_back(p_outcome);
+  // An outcome being absorbed may still hold this label; the new outcome takes it over
+  m_outcomeLabels[p_outcome->m_label] = p_outcome.get();
+}
+inline void GameRep::IndexOutcomeLabels()
+{
+  m_outcomeLabels.clear();
+  for (const auto &outcome : m_outcomes) {
+    m_outcomeLabels[outcome->m_label] = outcome.get();
+  }
+}
+inline void GameRep::UnindexOutcomeLabel(const GameOutcomeRep *p_outcome)
+{
+  if (const auto entry = m_outcomeLabels.find(p_outcome->m_label);
+      entry != m_outcomeLabels.end() && entry->second == p_outcome) {
+    m_outcomeLabels.erase(entry);
+  }
+}
+inline void GameRep::EraseOutcomes(const std::set<const GameOutcomeRep *> &p_outcomes)
+{
+  std::erase_if(m_outcomes, [&](const std::shared_ptr<GameOutcomeRep> &c) {
+    if (!p_outcomes.contains(c.get())) {
+      return false;
+    }
+    UnindexOutcomeLabel(c.get());
+    c->Invalidate();
+    return true;
+  });
+  std::for_each(
+      m_outcomes.begin(), m_outcomes.end(),
+      [outc = 1](const std::shared_ptr<GameOutcomeRep> &c) mutable { c->m_number = outc++; });
+}
+
+inline Game GamePlayerRep::GetGame() const { return m_game->shared_from_this(); }
+inline GameStrategy GamePlayerRep::GetStrategy(int st) const
+{
+  m_game->EnsureStrategies();
+  return m_strategies.at(st - 1);
+}
+inline GamePlayerRep::Strategies GamePlayerRep::GetStrategies() const
+{
+  m_game->EnsureStrategies();
+  return Strategies(std::const_pointer_cast<GamePlayerRep>(shared_from_this()), &m_strategies);
+}
+inline GamePlayerRep::Sequences GamePlayerRep::GetSequences() const
+{
+  m_game->EnsureSequences();
+  return Sequences(std::const_pointer_cast<GamePlayerRep>(shared_from_this()), &m_sequences);
+}
 
 //=======================================================================
 
+/// Factory function to create new game tree,
+[[nodiscard]] Game NewTree(const std::vector<std::string> &p_players = {});
+/// Factory function to create new game table
+[[nodiscard]] Game NewTable(const std::vector<int> &p_dim, bool p_sparseOutcomes = false);
 
-/// Reads a game in .efg or .nfg format from the input stream
-Game ReadGame(std::istream &);
+/// @brief Reads a game representation in .efg format
+///
+/// @param[in] p_stream An input stream, positioned at the start of the text in .efg format
+/// @return A handle to the game representation constructed
+/// @throw InvalidFileException If the stream does not contain a valid serialisation
+///                             of a game in .efg format.
+/// @sa Game::WriteEfgFile, ReadNfgFile, ReadAggFile, ReadBaggFile
+[[nodiscard]] Game ReadEfgFile(std::istream &p_stream);
 
-} // end namespace gambit
+/// @brief Reads a game representation in .nfg format
+/// @param[in] p_stream An input stream, positioned at the start of the text in .nfg format
+/// @return A handle to the game representation constructed
+/// @throw InvalidFileException If the stream does not contain a valid serialisation
+///                             of a game in .nfg format.
+/// @sa Game::WriteNfgFile, ReadEfgFile, ReadAggFile, ReadBaggFile
+[[nodiscard]] Game ReadNfgFile(std::istream &p_stream);
 
-#endif   // LIBGAMBIT_GAME_H
+/// @brief Reads a game representation from a graphical interface XML saveflie
+/// @param[in] p_stream An input stream, positioned at the start of the text
+/// @return A handle to the game representation constructed
+/// @throw InvalidFileException If the stream does not contain a valid serialisation
+///                             of a game in an XML savefile
+/// @sa ReadEfgFile, ReadNfgFile, ReadAggFile, ReadBaggFile
+[[nodiscard]] Game ReadGbtFile(std::istream &p_stream);
+
+/// @brief Reads a game from the input stream, attempting to autodetect file format
+/// @deprecated Deprecated in favour of the various ReadXXXGame functions.
+/// @sa ReadEfgFile, ReadNfgFile, ReadGbtFile, ReadAggFile, ReadBaggFile
+[[nodiscard]] Game ReadGame(std::istream &p_stream);
+
+/// @brief Generate a distribution over a simplex restricted to rational numbers of given
+/// denominator
+template <class Generator>
+std::list<Rational> UniformOnSimplex(int p_denom, size_t p_dim, Generator &generator)
+{
+  // NOLINTBEGIN(misc-const-correctness)
+  std::uniform_int_distribution<int> dist(1, p_denom + static_cast<int>(p_dim) - 1);
+  // NOLINTEND(misc-const-correctness)
+  std::set<int> cutoffs;
+  while (cutoffs.size() < p_dim - 1) {
+    cutoffs.insert(dist(generator));
+  }
+  cutoffs.insert(0);
+  cutoffs.insert(p_denom + p_dim);
+  // The cutoffs need to be sorted in ascending order; this is done automatically by C++ sets
+  std::list<Rational> output;
+  for (auto prob = cutoffs.cbegin(); std::next(prob) != cutoffs.cend(); prob++) {
+    output.emplace_back(*std::next(prob) - *prob - 1, p_denom);
+  }
+  return output;
+}
+
+} // namespace Gambit
+
+#endif // GAMBIT_GAMES_GAME_H

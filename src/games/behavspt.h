@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/behavspt.h
+// FILE: src/games/behavspt.h
 // Interface to supports for extensive forms
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,10 +20,15 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef LIBGAMBIT_BEHAVSPT_H
-#define LIBGAMBIT_BEHAVSPT_H
+#ifndef GAMBIT_GAMES_BEHAVSPT_H
+#define GAMBIT_GAMES_BEHAVSPT_H
 
+#include <list>
+#include <map>
+#include "core/lazy.h"
 #include "game.h"
+#include "gametree.h"
+#include "seqpure.h"
 
 namespace Gambit {
 
@@ -35,89 +40,83 @@ namespace Gambit {
 /// computational approaches that enumerate possible equilibrium
 /// supports.
 class BehaviorSupportProfile {
-protected:
+public:
+  /// The sequences of each player that are consistent with this support,
+  /// i.e. those whose action is in the support (or the empty sequence).
+  using SequenceMap = Gambit::SequenceMap;
+
+private:
   Game m_efg;
-  Array<Array<Array<GameAction> > > m_actions;
+  std::map<GameInfoset, std::vector<GameAction>> m_actions;
+  mutable Lazy<std::shared_ptr<SequenceMap>> m_sequences;
+  mutable Lazy<std::shared_ptr<std::map<GameInfoset, bool>>> m_reachableInfosets;
 
-  Array<List<bool> > m_infosetActive;
-  Array<List<List<bool> > > m_nonterminalActive;
+  std::map<GameInfoset, bool> m_infosetReachable;
+  std::map<GameNode, bool> m_nonterminalReachable;
 
-  void activate(const GameNode &);
-  void deactivate(const GameNode &);
-  void activate(const GameInfoset &);
-  void deactivate(const GameInfoset &);
-  bool HasActiveMembers(int pl, int iset) const;
+  bool HasReachableMembers(const GameInfoset &) const;
   void ActivateSubtree(const GameNode &);
   void DeactivateSubtree(const GameNode &);
-  void DeactivateSubtree(const GameNode &, List<GameInfoset> &);
+  std::shared_ptr<SequenceMap> GetSequenceMap() const;
+  void FindReachableInfosets(GameNode p_node, std::map<GameInfoset, bool> &p_reachable) const;
 
 public:
+  class Support {
+    const BehaviorSupportProfile *m_profile;
+    GameInfoset m_infoset;
+
+  public:
+    using const_iterator = std::vector<GameAction>::const_iterator;
+
+    Support() : m_profile(nullptr), m_infoset(nullptr) {}
+    Support(const BehaviorSupportProfile *p_profile, const GameInfoset &p_infoset)
+      : m_profile(p_profile), m_infoset(p_infoset)
+    {
+    }
+
+    size_t size() const { return m_profile->m_actions.at(m_infoset).size(); }
+    bool empty() const { return m_profile->m_actions.at(m_infoset).empty(); }
+    GameAction front() const { return m_profile->m_actions.at(m_infoset).front(); }
+    GameAction back() const { return m_profile->m_actions.at(m_infoset).back(); }
+
+    const_iterator begin() const { return m_profile->m_actions.at(m_infoset).begin(); }
+    const_iterator end() const { return m_profile->m_actions.at(m_infoset).end(); }
+  };
+
   /// @name Lifecycle
   //@{
-  /// Constructor.  By default, a support contains all strategies. 
-  BehaviorSupportProfile(const Game &);
-  ~BehaviorSupportProfile() { }
+  /// Constructor.  By default, a support contains all strategies.
+  explicit BehaviorSupportProfile(const Game &);
+  ~BehaviorSupportProfile() = default;
 
   //@}
 
   /// @name Operator overloading
   //@{
   /// Test for the equality of two supports (same actions at all infosets)
-  bool operator==(const BehaviorSupportProfile &) const;
-  bool operator!=(const BehaviorSupportProfile &p_support) const
-  { return !(*this == p_support); }
+  bool operator==(const BehaviorSupportProfile &p_support) const
+  {
+    return m_actions == p_support.m_actions;
+  }
 
   /// @name General information
   //@{
   /// Returns the game on which the support is defined.
-  Game GetGame(void) const { return m_efg; }
+  Game GetGame() const { return m_efg; }
 
-  /// Returns the number of actions in the information set
-  int NumActions(const GameInfoset &p_infoset) const
-  { return m_actions[p_infoset->GetPlayer()->GetNumber()][p_infoset->GetNumber()].Length(); }
-  int NumActions(int pl, int iset) const
-  { return m_actions[pl][iset].Length(); }
+  /// Returns the total number of actions in the support
+  size_t BehaviorProfileLength() const;
 
-  /// Returns the number of actions in the support for all information sets
-  PVector<int> NumActions(void) const;
-
-  /// Returns the action at the specified position in the support
-  GameAction GetAction(const GameInfoset &p_infoset, int p_act) const
-  { return m_actions[p_infoset->GetPlayer()->GetNumber()][p_infoset->GetNumber()][p_act]; }
-  GameAction GetAction(int pl, int iset, int act) const
-  { return m_actions[pl][iset][act]; }
-
-  /// Returns the position of the action in the support. 
-  int GetIndex(const GameAction &) const;
+  /// Returns the set of actions in the support at the information set
+  Support GetActions(const GameInfoset &p_infoset) const { return {this, p_infoset}; }
+  /// Does the information set have at least one active action?
+  bool HasAction(const GameInfoset &p_infoset) const { return !m_actions.at(p_infoset).empty(); }
 
   /// Returns whether the action is in the support.
   bool Contains(const GameAction &p_action) const
-  { return (GetIndex(p_action) != 0); }
-
-  /// The dimension of a behavior strategy at reachable information sets
-  int NumDegreesOfFreedom(void) const;
-
-  /// Does the information set have at least one active action?
-  bool HasActiveActionAt(const GameInfoset &) const;
-  /// Do all information sets have at least one active action?
-  bool HasActiveActionsAtAllInfosets(void) const;
-
-  /// Total number of sequences 
-  int NumSequences(void) const;
-  /// Number of sequences for a player
-  int NumSequences(int pl) const;
-
-  /// Is the information set active (i.e., reachable)?
-  bool IsActive(const GameInfoset &) const;
-  /// How many active members are there in the information set?
-  int NumActiveMembers(const GameInfoset &) const;
-  /// Is the node active (i.e., reachable)?
-  bool IsActive(const GameNode &) const;
-
-  /// Do all active information sets have actions in the support?
-  bool HasActiveActionsAtActiveInfosets(void) const;
-  /// Do only active information sets have actions in the support?
-  bool HasActiveActionsAtActiveInfosetsAndNoOthers(void) const;
+  {
+    return contains(m_actions.at(p_action->GetInfoset()), p_action);
+  }
   //@}
 
   /// @name Editing the support
@@ -126,50 +125,98 @@ public:
   void AddAction(const GameAction &);
   /// Removes the action from the support; returns true if successful.
   bool RemoveAction(const GameAction &);
-  /// Removes the action and returns the list of information sets
-  /// made unreachable by the action's removal
-  bool RemoveAction(const GameAction &, List<GameInfoset> &);
   //@}
 
   /// @name Reachability of nodes and information sets
   //@{
-  List<GameNode> ReachableNonterminalNodes(void) const;
-  List<GameNode> ReachableNonterminalNodes(const GameNode &) const;
-  /// Sets p_reachable(pl,iset) to 1 if infoset (pl,iset) reachable after p_node
-  void ReachableInfosets(const GameNode &p_node, 
-			 PVector<int> &p_reachable) const;
-  List<GameInfoset> ReachableInfosets(const GamePlayer &) const;
-
-  bool MayReach(const GameNode &) const;
-  bool MayReach(const GameInfoset &) const;
-
-  List<GameNode> ReachableMembers(const GameInfoset &) const;
+  /// Can the information set be reached under this support?
+  bool IsReachable(const GameInfoset &p_infoset) const { return m_infosetReachable.at(p_infoset); }
   //@}
 
-  /// @name Identification of dominated actions
-  //@{
-  /// Returns true if action a is dominated by action b
-  bool Dominates(const GameAction &a, const GameAction &b,
-		 bool p_strict, bool p_conditional) const;
-  /// Returns true if the action is dominated by some other action
-  bool IsDominated(const GameAction &a, 
-		   bool p_strict, bool p_conditional) const;
-  /// Returns a copy of the support with dominated actions eliminated
-  BehaviorSupportProfile Undominated(bool p_strict, bool p_conditional,
-			   const Array<int> &players,
-			   std::ostream &) const;
-  //@}
+  class Infosets {
+    const BehaviorSupportProfile *m_support;
+
+  public:
+    Infosets(const BehaviorSupportProfile *p_support) : m_support(p_support) {}
+
+    size_t size() const
+    {
+      auto reachable_infosets = m_support->GetReachableInfosets();
+      size_t count = 0;
+      for (auto [infoset, is_reachable] : *reachable_infosets) {
+        if (is_reachable && !infoset->GetPlayer()->IsChance()) {
+          ++count;
+        }
+      }
+      return count;
+    }
+  };
+
+  class Sequences {
+    const BehaviorSupportProfile *m_support;
+
+  public:
+    class iterator {
+      // Sequences are visited grouped by player, in the game's canonical player order
+      // (GameRep::Players), rather than in SequenceMap's own key order.  SequenceMap is
+      // keyed by GamePlayer, whose ordering is based on object addresses; iterating the
+      // map directly would therefore make the visitation order (and hence, downstream,
+      // any polynomial variable numbering derived from it) depend on heap layout, which
+      // can differ from run to run.
+      const std::shared_ptr<SequenceMap> m_sequences;
+      GameRep::Players m_players;
+      GameRep::Players::iterator m_currentPlayer;
+      std::vector<GameSequence>::const_iterator m_currentSequence;
+
+    public:
+      iterator(const std::shared_ptr<SequenceMap> p_sequences, const GameRep::Players &p_players,
+               bool p_end);
+
+      GameSequence operator*() const { return *m_currentSequence; }
+      GameSequence operator->() const { return *m_currentSequence; }
+
+      iterator &operator++();
+
+      bool operator==(const iterator &it) const;
+    };
+
+    Sequences(const BehaviorSupportProfile *p_support) : m_support(p_support) {}
+
+    size_t size() const;
+
+    iterator begin() const;
+    iterator end() const;
+  };
+
+  class PlayerSequences {
+    const BehaviorSupportProfile *m_support;
+    GamePlayer m_player;
+
+  public:
+    PlayerSequences(const BehaviorSupportProfile *p_support, const GamePlayer &p_player)
+      : m_support(p_support), m_player(p_player)
+    {
+    }
+
+    size_t size() const;
+    std::vector<GameSequence>::const_iterator begin() const;
+    std::vector<GameSequence>::const_iterator end() const;
+  };
+
+  Sequences GetSequences() const;
+  PlayerSequences GetSequences(const GamePlayer &p_player) const;
+  /// Returns the sequences of the actions at the information set that are
+  /// in the support.
+  std::vector<GameSequence> GetSequences(const GameInfoset &p_infoset) const;
+  GameRep::Players GetPlayers() const { return GetGame()->GetPlayers(); }
+  template <class T>
+  MixedBehaviorProfile<T> ToMixedBehaviorProfile(const std::map<GameSequence, T> &) const;
+  Infosets GetInfosets() const { return {this}; }
+  SequenceContingencies GetSequenceContingencies() const;
+
+  std::shared_ptr<std::map<GameInfoset, bool>> GetReachableInfosets() const;
 };
 
 } // end namespace Gambit
 
-#endif  // LIBGAMBIT_BEHAVSPT_H
-
-
-
-
-
-
-
-
-
+#endif // GAMBIT_GAMES_BEHAVSPT_H

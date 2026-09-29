@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/gamedoc.h
 // Declaration of game document class
@@ -20,126 +20,56 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMEDOC_H
-#define GAMEDOC_H
+#ifndef GAMBIT_GUI_GAMEDOC_H
+#define GAMBIT_GUI_GAMEDOC_H
 
-#include "gambit.h"
+#include <map>
+
+#include "games/behavspt.h"
+#include "games/stratspt.h"
 #include "style.h"
 #include "analysis.h"
 
-using namespace Gambit;
+namespace Gambit::GUI {
 
-class gbtGameView;
-class gbtGameDocument;
-
-//!
-//! This class manages the "stack" of supports obtained by eliminating
-//! dominated actions from consideration.
-//!
-class gbtBehavDominanceStack {
-private:
-  gbtGameDocument *m_doc;
-  bool m_strict;
-  Gambit::Array<Gambit::BehaviorSupportProfile *> m_supports;
-  int m_current;
-  bool m_noFurther;
-
-public:
-  gbtBehavDominanceStack(gbtGameDocument *p_doc, bool p_strict);
-  ~gbtBehavDominanceStack();
-
-  //!
-  //! Returns the number of supports in the stack
-  //!
-  int NumSupports(void) const { return m_supports.Length(); }
-
-  //!
-  //! Get the i'th support in the stack
-  //! (where i=1 is always the "full" support)
-  //!
-  const Gambit::BehaviorSupportProfile &GetSupport(int i) const { return *m_supports[i]; }
-
-  //!
-  //! Get the current support
-  //!
-  const Gambit::BehaviorSupportProfile &GetCurrent(void) const { return *m_supports[m_current]; }
-
-  //!
-  //! Get the level of iteration (1 = no iteration)
-  //!
-  int GetLevel(void) const { return m_current; }
-
-  //!
-  //! Sets whether elimination is strict or weak.  If this changes the
-  //! internal setting, a Reset() is done
-  //!
-  void SetStrict(bool p_strict);
-
-  //!
-  //! Reset the stack by clearing out all supports
-  //!
-  void Reset(void);
-
-  //!
-  //! Go to the next level of iteration.  Returns 'true' if successful,
-  //! 'false' if no effect (i.e., no further actions could be eliminated)
-  //!
-  bool NextLevel(void);
-
-  //!
-  //! Go to the previous level of iteration.  Returns 'true' if successful,
-  //! 'false' if no effect (i.e., already at the full support)
-  //!
-  bool PreviousLevel(void);
-
-  //!
-  //! Go to the top level (the full support)
-  //!
-  void TopLevel(void) { m_current = 1; }
-
-  //!
-  //! Returns 'false' if it is known that no further eliminations can be done
-  //!
-  bool CanEliminate(void) const 
-    { return (m_current < m_supports.Length() || !m_noFurther); }
-};
+class GameView;
+class GameDocument;
 
 //!
 //! This class manages the "stack" of supports obtained by eliminating
 //! dominated strategies from consideration.
 //!
-class gbtStrategyDominanceStack {
-private:
-  gbtGameDocument *m_doc;
+class StrategyDominanceStack {
+  GameDocument *m_doc;
   bool m_strict;
-  Gambit::Array<Gambit::StrategySupportProfile *> m_supports;
-  int m_current;
+  Array<std::shared_ptr<StrategySupportProfile>> m_supports;
+  size_t m_current{0};
   bool m_noFurther;
 
 public:
-  gbtStrategyDominanceStack(gbtGameDocument *p_doc, bool p_strict);
-  ~gbtStrategyDominanceStack();
+  StrategyDominanceStack(GameDocument *p_doc, bool p_strict);
+  ~StrategyDominanceStack() = default;
 
   //!
   //! Returns the number of supports in the stack
   //!
-  int NumSupports(void) const { return m_supports.Length(); }
+  int NumSupports() const { return m_supports.size(); }
 
   //!
   //! Get the i'th support in the stack
   //! (where i=1 is always the "full" support)
   //!
-  const Gambit::StrategySupportProfile &GetSupport(int i) const { return *m_supports[i]; }
+  const StrategySupportProfile &GetSupport(int i) const { return *m_supports[i]; }
 
   //!
   //! Get the current support
   //!
-  const Gambit::StrategySupportProfile &GetCurrent(void) const { return *m_supports[m_current]; }
+  const StrategySupportProfile &GetCurrent() const { return *m_supports[m_current]; }
 
   //!
   //! Get the level of iteration (1 = no iteration)
   //!
-  int GetLevel(void) const { return m_current; }
+  int GetLevel() const { return m_current; }
 
   //!
   //! Sets whether elimination is strict or weak.  If this changes the
@@ -150,41 +80,38 @@ public:
   //!
   //! Gets whether elimination is strict or weak.
   //!
-  bool GetStrict(void) const { return m_strict; }
+  bool GetStrict() const { return m_strict; }
 
   //!
   //! Reset the stack by clearing out all supports
   //!
-  void Reset(void);
+  void Reset();
 
   //!
   //! Go to the next level of iteration.  Returns 'true' if successful,
   //! 'false' if no effect (i.e., no further actions could be eliminated)
   //!
-  bool NextLevel(void);
+  bool NextLevel();
 
   //!
   //! Go to the previous level of iteration.  Returns 'true' if successful,
   //! 'false' if no effect (i.e., already at the full support)
   //!
-  bool PreviousLevel(void);
+  bool PreviousLevel();
 
   //!
   //! Go to the top level (the full support)
   //!
-  void TopLevel(void) { m_current = 1; }
+  void TopLevel() { m_current = 1; }
 
   //!
   //! Returns 'false' if it is known that no further eliminations can be done
   //!
-  bool CanEliminate(void) const 
-    { return (m_current < m_supports.Length() || !m_noFurther); }
-	      
+  bool CanEliminate() const { return (m_current < m_supports.size() || !m_noFurther); }
 };
 
-
 //
-// These are passed to gbtGameDocument::UpdateViews() to indicate which
+// These are passed to GameDocument::UpdateViews() to indicate which
 // types of modifications have occurred.
 //
 // GBT_DOC_MODIFIED_GAME: The game itself has been modified; that is, the
@@ -196,174 +123,264 @@ public:
 // principle, be kept -- but they may no longer be Nash, etc.
 //
 // GBT_DOC_MODIFIED_LABELS: Labeling of players, strategies, etc. has
-// changed.  These have no effect on the game mathematically, so computed
-// data may be kept; but, we want to track the label change for undo, etc.
+// changed.
 //
-// GBT_DOC_MODIFIED_VIEWS: Information about how the document is viewed
-// (e.g., player colors) has changed.  We want to track this for undo,
-// but, again, this has no effect on the game mathematically.
-// 
-typedef enum {
-  GBT_DOC_MODIFIED_NONE = 0x00,
-  GBT_DOC_MODIFIED_GAME = 0x01,
-  GBT_DOC_MODIFIED_PAYOFFS = 0x02,
-  GBT_DOC_MODIFIED_LABELS = 0x04,
-  GBT_DOC_MODIFIED_VIEWS = 0x08
-} gbtGameModificationType;
+// GBT_DOC_MODIFIED_WORKSPACE: Stored analysis workspace data has changed.
+// This affects workbook/workspace persistence, but does not modify the
+// underlying game model.
+//
+// GBT_DOC_MODIFIED_PRESENTATION: Settings on how information is rendered
+// (for example, colors) have changed.
+//
+enum class GameModificationType : unsigned int {
+  None = 0x00,
+  GameForm = 0x01,
+  GamePayoffs = 0x02,
+  GameLabels = 0x04,
+  Workspace = 0x08,
+  Presentation = 0x10
+};
 
-class gbtGameDocument {
-friend class gbtGameView;
-private:
-  Gambit::Array<gbtGameView *> m_views;
+inline GameModificationType operator|(GameModificationType p_left, GameModificationType p_right)
+{
+  return static_cast<GameModificationType>(static_cast<unsigned int>(p_left) |
+                                           static_cast<unsigned int>(p_right));
+}
 
-  void AddView(gbtGameView *p_view)  { m_views.Append(p_view); }
-  void RemoveView(gbtGameView *p_view)
-    { 
-      m_views.Remove(m_views.Find(p_view)); 
-      if (m_views.Length() == 0)  delete this;
-    }
+inline GameModificationType operator&(GameModificationType p_left, GameModificationType p_right)
+{
+  return static_cast<GameModificationType>(static_cast<unsigned int>(p_left) &
+                                           static_cast<unsigned int>(p_right));
+}
 
-  Gambit::Game m_game;
-  wxString m_filename;
+inline GameModificationType &operator|=(GameModificationType &p_left, GameModificationType p_right)
+{
+  p_left = p_left | p_right;
+  return p_left;
+}
 
-  gbtStyle m_style;
-  Gambit::GameNode m_selectNode;
-  bool m_modified;
+inline bool HasModification(GameModificationType p_modifications, GameModificationType p_test)
+{
+  return static_cast<unsigned int>(p_modifications & p_test) != 0;
+}
 
-  gbtBehavDominanceStack m_behavSupports;
-  gbtStrategyDominanceStack m_stratSupports;
+class AnalysisWorkspace {
+  GameDocument *m_doc;
 
-  Gambit::List<gbtAnalysisOutput *> m_profiles;
+  StrategyDominanceStack m_stratSupports;
+
+  Array<std::shared_ptr<AnalysisOutput>> m_profiles;
   int m_currentProfileList;
 
-  Gambit::List<std::string> m_undoList, m_redoList;
+public:
+  explicit AnalysisWorkspace(GameDocument *p_doc);
 
+  void Clear();
+  void ResetForGameChange();
+  void BuildNfg();
 
-  void UpdateViews(gbtGameModificationType p_modifications);
+  const AnalysisOutput &GetProfiles() const { return *m_profiles[m_currentProfileList]; }
+  const AnalysisOutput &GetProfiles(int p_index) const { return *m_profiles[p_index]; }
+  void AddEquilibriumOutput(std::shared_ptr<AnalysisOutput> p_profs);
+  void SelectEquilibriumOutput(int p_index);
+  int NumProfileLists() const { return m_profiles.size(); }
+  int GetCurrentProfileList() const { return m_currentProfileList; }
+
+  int GetCurrentProfile() const
+  {
+    return (m_profiles.size() == 0) ? 0 : GetProfiles().GetCurrent();
+  }
+  void SelectProfile(int p_profile);
+
+  const StrategySupportProfile &GetNfgSupport() const { return m_stratSupports.GetCurrent(); }
+  void SetDominanceStrictness(bool p_strict);
+  bool GetStrategyElimStrength() const;
+  bool NextDominanceLevel();
+  void PreviousDominanceLevel();
+  void TopDominanceLevel();
+  bool CanStrategyElim() const;
+  int GetStrategyElimLevel() const;
+
+  std::vector<LegacyWorkspaceFile::Analysis> Save() const;
+  bool Load(const std::vector<LegacyWorkspaceFile::Analysis> &p_analyses);
+};
+
+// Generates a label guaranteed not to collide with any of p_game's current outcome labels, of
+// the form "Outcome N" -- GameRep::MakeOutcome() itself rejects an empty or duplicate label,
+// so callers that need to pre-fill a fresh outcome's label (rather than make the user type one
+// first) use this.
+std::string GenerateOutcomeLabel(const Game &p_game);
+
+class GameDocument {
+  friend class GameView;
+
+  std::list<GameView *> m_views;
+
+  void AddView(GameView *p_view) { m_views.push_back(p_view); }
+  void RemoveView(GameView *p_view)
+  {
+    m_views.erase(std::find(m_views.begin(), m_views.end(), p_view));
+  }
+
+  Game m_game;
+  wxString m_filename;
+
+  TreeRenderConfig m_style;
+  bool m_gameModified, m_workspaceModified;
+
+  AnalysisWorkspace m_workspace;
+
+  std::list<std::string> m_undoList, m_redoList;
+
+  void NotifyChanged(GameModificationType p_modifications);
+  void UpdateViews();
+
+  /// Discard all undo/redo history, taking the current state as the new baseline
+  void ResetUndoHistory();
+  /// Replace the game, workspace, and style with those saved in a snapshot
+  /// previously produced by `SaveWorkspace`
+  void RestoreSnapshot(const std::string &p_snapshot);
 
 public:
-  gbtGameDocument(Gambit::Game p_game);
-  ~gbtGameDocument();
+  explicit GameDocument(Game p_game);
+  GameDocument(const GameDocument &) = delete;
+  GameDocument &operator=(const GameDocument &) = delete;
+  ~GameDocument();
 
   //!
-  //! @name Reading and writing .gbt savefiles
+  //! @name Reading and writing savefiles
   //!
   //@{
-  /// Load document from the specified file (which should be a .gbt file)
-  /// Returns true if successful, false if error
-  bool LoadDocument(const wxString &p_filename, bool p_saveUndo = true);
-  void SaveDocument(std::ostream &) const;
+  enum class LoadResult { Success, OpenFailed, ParseFailed, UnsupportedRepresentation };
+  struct LoadOutcome {
+    LoadResult result;
+    std::shared_ptr<GameDocument> document; ///< non-null iff result == LoadResult::Success
+  };
+  /// Attempt to construct a document by reading `p_filename`, trying it first as a
+  /// Gambit workspace (.gbt) and then as a bare game (.efg/.nfg) file.
+  static LoadOutcome Load(const wxString &p_filename);
+
+  void SaveWorkspace(std::ostream &) const;
   //@}
 
-  Gambit::Game GetGame(void) const { return m_game; }
-  void BuildNfg(void);
+  Game GetGame() const { return m_game; }
+  void BuildNfg();
 
-  const wxString &GetFilename(void) const { return m_filename; }
+  const wxString &GetFilename() const { return m_filename; }
   void SetFilename(const wxString &p_filename) { m_filename = p_filename; }
 
-  bool IsModified(void) const { return m_modified; }
-  void SetModified(bool p_modified) { m_modified = p_modified; }
+  bool IsModified() const { return m_gameModified || m_workspaceModified; }
+  bool IsGameModified() const { return m_gameModified; }
+  bool IsWorkspaceModified() const { return m_workspaceModified; }
+  void SetGameModified(bool p_modified) { m_gameModified = p_modified; }
+  void SetWorkspaceModified(bool p_unsaved) { m_workspaceModified = p_unsaved; }
 
-  const gbtStyle &GetStyle(void) const { return m_style; }
-  void SetStyle(const gbtStyle &p_style);
-
-  int NumPlayers(void) const { return m_game->NumPlayers(); }
-  bool IsConstSum(void) const { return m_game->IsConstSum(); }
-  bool IsTree(void) const { return m_game->IsTree(); }
-
+  const AnalysisWorkspace &GetWorkspace() const { return m_workspace; }
 
   //!
-  //! @name Handling of undo/redo features
+  //! @name Undo/redo
   //!
   //@{
-  bool CanUndo(void) const { return (m_undoList.Length() > 1); }
-  void Undo(void);
+  bool CanUndo() const { return m_undoList.size() > 1; }
+  void Undo();
 
-  bool CanRedo(void) const { return (m_redoList.Length() > 0); }
-  void Redo(void);
+  bool CanRedo() const { return !m_redoList.empty(); }
+  void Redo();
   //@}
 
-  //!
-  //! @name Handling of list of computed profiles
-  //!
-  //@{
-  const gbtAnalysisOutput &GetProfiles(void) const
-    { return *m_profiles[m_currentProfileList]; }
-  const gbtAnalysisOutput &GetProfiles(int p_index) const
-    { return *m_profiles[p_index]; }
-  void AddProfileList(gbtAnalysisOutput *);
-  void SetProfileList(int p_index);
-  int NumProfileLists(void) const { return m_profiles.Length(); }
-  int GetCurrentProfileList(void) const { return m_currentProfileList; }
+  const TreeRenderConfig &GetStyle() const { return m_style; }
+  void SetStyle(const TreeRenderConfig &p_style);
 
-  int GetCurrentProfile(void) const 
-  { return (m_profiles.Length() == 0) ? 0 : GetProfiles().GetCurrent(); }
-  void SetCurrentProfile(int p_profile);
-  /*
-  void AddProfiles(const Gambit::List<Gambit::MixedBehavProfile<double> > &);
-  void AddProfile(const Gambit::MixedBehavProfile<double> &);
-  void AddProfiles(const Gambit::List<Gambit::MixedStrategyProfile<double> > &);
-  void AddProfile(const Gambit::MixedStrategyProfile<double> &);
-  */
-  //@}
+  GameAction GetAction(int p_index) const;
 
-  //!
-  //! @name Handling of behavior supports
-  //!
-  //@{
-  const Gambit::BehaviorSupportProfile &GetEfgSupport(void) const
-    { return m_behavSupports.GetCurrent(); }
-  void SetBehavElimStrength(bool p_strict);
-  bool NextBehavElimLevel(void);
-  void PreviousBehavElimLevel(void);
-  void TopBehavElimLevel(void);
-  bool CanBehavElim(void) const;
-  int GetBehavElimLevel(void) const;
-  //@}
+  void DoAddEquilibriumOutput(std::shared_ptr<AnalysisOutput> p_profs);
+  void DoSelectEquilibriumOutput(int p_index);
+  void DoSelectProfile(int p_profile);
 
-  //!
-  //! @name Handling of strategy supports
-  //!
-  //@{
-  const Gambit::StrategySupportProfile &GetNfgSupport(void) const
-    { return m_stratSupports.GetCurrent(); }
-  void SetStrategyElimStrength(bool p_strict);
-  bool GetStrategyElimStrength(void) const;
-  bool NextStrategyElimLevel(void);
-  void PreviousStrategyElimLevel(void);
-  void TopStrategyElimLevel(void);
-  bool CanStrategyElim(void) const;
-  int GetStrategyElimLevel(void) const;
-  //@}
+  BehaviorSupportProfile GetEfgSupport() const { return BehaviorSupportProfile(m_game); }
+  const StrategySupportProfile &GetNfgSupport() const { return m_workspace.GetNfgSupport(); }
 
-  Gambit::GameNode GetSelectNode(void) const { return m_selectNode; }
-  void SetSelectNode(Gambit::GameNode);
+  void DoSetDominanceStrictness(bool p_strict);
+  bool DoNextDominanceLevel();
+  void DoPreviousDominanceLevel();
+  void DoTopDominanceLevel();
 
   /// Call to ask viewers to post any pending changes
-  void PostPendingChanges(void);
+  void PostPendingChanges();
 
   /// Operations on game model
-  void DoSave(const wxString &p_filename);
-  void DoExportEfg(const wxString &p_filename);
-  void DoExportNfg(const wxString &p_filename);
+  enum class GameSaveFormat { Efg, Nfg, Workspace };
+  GameSaveFormat GetCurrentSaveFormat() const
+  {
+    if (m_filename.EndsWith(".efg")) {
+      return GameSaveFormat::Efg;
+    }
+    if (m_filename.EndsWith(".nfg")) {
+      return GameSaveFormat::Nfg;
+    }
+    return GameSaveFormat::Workspace;
+  }
+  void DoSave(const wxString &p_filename, GameSaveFormat p_format);
   void DoSetTitle(const wxString &p_title, const wxString &p_comment);
-  void DoNewPlayer(void);
-  void DoSetPlayerLabel(GamePlayer p_player, const wxString &p_label);
-  void DoNewStrategy(GamePlayer p_player);
-  void DoDeleteStrategy(GameStrategy p_strategy);
-  void DoSetStrategyLabel(GameStrategy p_strategy, const wxString &p_label);
+  /// Adds one player to the game, via `Game::SetPlayers`, labeled with the first unused
+  /// "Player N".
+  GamePlayer DoAddPlayer();
+  /// Reassign player labels in a single operation; see `Game::RelabelPlayers`.
+  void DoRelabelPlayers(const std::map<std::string, std::string> &p_labels);
+  /// Declare the players of the game in a single operation, covering any combination of
+  /// adding, deleting, reordering, and relabeling players. Chance is not part of either list;
+  /// it is not affected by this operation.
+  ///
+  /// `p_stableLabels` identifies each player as it was before this edit (an existing player's
+  /// current label, or a placeholder for one newly created); `p_labels` is what that same
+  /// player, by position, is to be labeled after the edit.  Structure (which players exist,
+  /// and in what order) is resolved first, purely from `p_stableLabels`; labels are then
+  /// reassigned from `p_stableLabels` to `p_labels`.  Doing so in this order means a rename
+  /// that reuses a label freed up by a simultaneous deletion never collides with the
+  /// not-yet-renamed original.
+  void DoSetPlayers(const std::vector<std::string> &p_stableLabels,
+                    const std::vector<std::string> &p_labels);
+  /// Declare the strategies of `p_player` in a single operation, covering any combination
+  /// of adding, deleting, reordering, and relabeling strategies.
+  ///
+  /// `p_stableLabels` identifies each strategy as it was before this edit (an existing
+  /// strategy's current label, or a placeholder for one newly created); `p_labels` is what
+  /// that same strategy, by position, is to be labeled after the edit.  Structure (which
+  /// strategies exist, and in what order) is resolved first, purely from `p_stableLabels`;
+  /// labels are then reassigned from `p_stableLabels` to `p_labels`.  Doing so in this order
+  /// means a rename that reuses a label freed up by a simultaneous deletion never collides
+  /// with the not-yet-renamed original.
+  void DoSetStrategies(GamePlayer p_player, const std::vector<std::string> &p_stableLabels,
+                       const std::vector<std::string> &p_labels);
   void DoSetInfosetLabel(GameInfoset p_infoset, const wxString &p_label);
-  void DoSetActionLabel(GameAction p_action, const wxString &p_label);
-  void DoSetActionProb(GameInfoset p_infoset, unsigned int p_action,
-		       const wxString &p_prob);
+  void DoRelabelActions(GameInfoset p_infoset, const std::map<std::string, std::string> &p_labels);
+  /// Declare the actions of `p_infoset` in a single operation, covering any combination
+  /// of adding, deleting, reordering, and relabeling actions.
+  ///
+  /// `p_stableLabels` identifies each action as it was before this edit (an existing
+  /// action's current label, or a placeholder for one newly created); `p_labels` is what
+  /// that same action, by position, is to be labeled after the edit.  Structure (which
+  /// actions exist, and in what order) is resolved first, purely from `p_stableLabels` and
+  /// `p_probs`; labels are then reassigned from `p_stableLabels` to `p_labels`.  Doing so in
+  /// this order means a rename that reuses a label freed up by a simultaneous deletion
+  /// never collides with the not-yet-renamed original.
+  void DoSetActions(GameInfoset p_infoset, const std::vector<std::string> &p_stableLabels,
+                    const std::vector<std::string> &p_labels, const std::vector<Number> &p_probs);
   void DoSetInfoset(GameNode p_node, GameInfoset p_infoset);
   void DoLeaveInfoset(GameNode p_node);
   void DoRevealAction(GameInfoset p_infoset, GamePlayer p_player);
-  void DoInsertAction(GameNode p_node);
   void DoSetNodeLabel(GameNode p_node, const wxString &p_label);
   void DoAppendMove(GameNode p_node, GameInfoset p_infoset);
-  void DoInsertMove(GameNode p_node, GamePlayer p_player, unsigned int p_actions);
-  void DoInsertMove(GameNode p_node, GameInfoset p_infoset);
+  // Appends a fresh move for p_player at the terminal node p_node, with actions labeled per
+  // p_labels. p_probs gives the chance distribution when p_player is the chance player, and
+  // is ignored otherwise.
+  void DoAppendMove(GameNode p_node, GamePlayer p_player, const std::vector<std::string> &p_labels,
+                    const std::vector<Number> &p_probs);
+  // Inserts a move for p_player prior to p_node, with actions labeled per p_labels -- p_node
+  // and everything below it becomes the first action's subtree. p_probs gives the chance
+  // distribution when p_player is the chance player, and is ignored otherwise.
+  void DoInsertMove(GameNode p_node, GamePlayer p_player, const std::vector<std::string> &p_labels,
+                    const std::vector<Number> &p_probs);
   void DoCopyTree(GameNode p_destNode, GameNode p_srcNode);
   void DoMoveTree(GameNode p_destNode, GameNode p_srcNode);
   void DoDeleteParent(GameNode p_node);
@@ -373,30 +390,58 @@ public:
   void DoNewOutcome(GameNode p_node);
   void DoNewOutcome(const PureStrategyProfile &p_profile);
   void DoSetOutcome(GameNode p_node, GameOutcome p_outcome);
+  void DoSetOutcomeData(const GameNode &p_node, const wxString &p_label,
+                        const std::vector<wxString> &p_payoffs);
+  void DoSetOutcomeData(GameOutcome p_outcome, const wxString &p_label,
+                        const std::vector<wxString> &p_payoffs);
   void DoRemoveOutcome(GameNode p_node);
-  void DoCopyOutcome(GameNode p_node, GameOutcome p_outcome);
-  void DoSetPayoff(GameOutcome p_outcome, int p_player,
-		   const wxString &p_value);
+  void DoRemoveOutcome(const PureStrategyProfile &p_profile);
+  void DoMakeOutcome(const std::vector<PureStrategyProfile> &p_profiles,
+                     const std::vector<Number> &p_payoffs, const std::string &p_label);
+  void DoSetPayoff(GameOutcome p_outcome, int p_player, const wxString &p_value);
 
-  void DoAddOutput(gbtAnalysisOutput &p_list, const wxString &p_output);
+  void DoAnalysisOutputChanged();
 };
 
-class gbtGameView {
+inline std::shared_ptr<GameDocument> NewTreeDocument()
+{
+  const Game efg = NewTree({"Player 1", "Player 2"});
+  efg->SetTitle("Untitled Extensive Game");
+  return std::make_shared<GameDocument>(efg);
+}
+
+inline std::shared_ptr<GameDocument> NewTableDocument(const std::vector<int> &p_dim)
+{
+  const Game nfg = NewTable(p_dim);
+  nfg->SetTitle("Untitled Strategic Game");
+  std::map<std::string, std::string> labels;
+  int pl = 1;
+  for (const auto &player : nfg->GetPlayers()) {
+    labels[player->GetLabel()] = "Player " + std::to_string(pl++);
+  }
+  nfg->RelabelPlayers(labels);
+  return std::make_shared<GameDocument>(nfg);
+}
+
+class GameView {
 protected:
-  gbtGameDocument *m_doc;
+  std::shared_ptr<GameDocument> m_doc;
 
 public:
-  gbtGameView(gbtGameDocument *p_doc)
-    : m_doc(p_doc) { m_doc->AddView(this); }
-  virtual ~gbtGameView()
-    { m_doc->RemoveView(this); }
+  explicit GameView(const std::shared_ptr<GameDocument> &p_doc) : m_doc(p_doc)
+  {
+    m_doc->AddView(this);
+  }
+  virtual ~GameView() { m_doc->RemoveView(this); }
 
-  virtual void OnUpdate(void) = 0;
+  virtual void OnUpdate() = 0;
 
   /// Post any pending changes in the viewer to the document
-  virtual void PostPendingChanges(void) { }
+  virtual void PostPendingChanges() {}
 
-  gbtGameDocument *GetDocument(void) const { return m_doc; }
+  std::shared_ptr<GameDocument> GetDocument() const { return m_doc; }
 };
 
-#endif  // GAMEDOC_H
+} // namespace Gambit::GUI
+
+#endif // GAMBIT_GUI_GAMEDOC_H

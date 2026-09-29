@@ -1,0 +1,508 @@
+//
+// This file is part of Gambit
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
+//
+// FILE: src/solvers/logit/nfglogit.cc
+// Computation of quantal response equilibrium correspondence for
+// normal form games.
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+
+#include <cmath>
+
+#include "games.h"
+#include "logit.h"
+#include "solvers/path/path.h"
+
+namespace Gambit {
+
+namespace {
+
+void PointToProfile(MixedStrategyProfile<double> &p_profile, const Vector<double> &p_point)
+{
+  for (size_t i = 1; i < p_point.size(); i++) {
+    p_profile[i] = std::exp(p_point[i]);
+  }
+}
+
+void PointToLogProfile(MixedStrategyProfile<double> &p_profile, const Vector<double> &p_point)
+{
+  for (size_t i = 1; i < p_point.size(); i++) {
+    p_profile[i] = p_point[i];
+  }
+}
+
+Vector<double> ProfileToPoint(const LogitQREMixedStrategyProfile &p_profile)
+{
+  Vector<double> point(p_profile.size() + 1);
+  for (size_t i = 1; i <= p_profile.size(); i++) {
+    point[i] = std::log(p_profile[i]);
+  }
+  point.back() = p_profile.GetLambda();
+  return point;
+}
+
+double LogLike(const Vector<double> &p_frequencies, const Vector<double> &p_point)
+{
+  return std::inner_product(
+      p_frequencies.begin(), p_frequencies.end(), p_point.begin(), 0.0, std::plus<>(),
+      [](const double freq, const double prob) { return freq * std::log(prob); });
+}
+
+double DiffLogLike(const Vector<double> &p_frequencies, const Vector<double> &p_tangent)
+{
+  return std::inner_product(p_frequencies.begin(), p_frequencies.end(), p_tangent.begin(), 0.0);
+}
+
+bool RegretTerminationFunction(const Game &p_game, const Vector<double> &p_point, double p_regret)
+{
+  if (p_point.back() < 0.0) {
+    return true;
+  }
+  MixedStrategyProfile<double> profile(p_game->NewMixedStrategyProfile(0.0));
+  PointToProfile(profile, p_point);
+  return profile.GetMaxRegret() < p_regret;
+}
+
+class Equation {
+public:
+  virtual ~Equation() = default;
+
+  virtual double Value(const MixedStrategyProfile<double> &p_profile,
+                       const MixedStrategyProfile<double> &p_logProfile,
+                       const Vector<double> &p_strategyValues, double p_lambda) const = 0;
+};
+
+class SumToOneEquation final : public Equation {
+  Game m_game;
+  GamePlayer m_player;
+  int m_firstIndex{0}, m_lastIndex{0};
+
+public:
+  explicit SumToOneEquation(const GamePlayer &p_player)
+    : m_game(p_player->GetGame()), m_player(p_player)
+  {
+    int col = 1;
+    for (const auto &player : m_game->GetPlayers()) {
+      if (player != m_player) {
+        col += player->GetStrategies().size();
+        continue;
+      }
+      m_firstIndex = col;
+      m_lastIndex = col + player->GetStrategies().size();
+      return;
+    }
+  }
+
+  ~SumToOneEquation() override = default;
+  double Value(const MixedStrategyProfile<double> &p_profile,
+               const MixedStrategyProfile<double> &p_logProfile,
+               const Vector<double> &p_strategyValues, double p_lambda) const override;
+};
+
+double SumToOneEquation::Value(const MixedStrategyProfile<double> &p_profile,
+                               const MixedStrategyProfile<double> &p_logProfile,
+                               const Vector<double> &p_strategyValues, double p_lambda) const
+{
+  double value = -1.0;
+  for (int col = m_firstIndex; col < m_lastIndex; col++) {
+    value += p_profile[col];
+  }
+  return value;
+}
+
+class RatioEquation final : public Equation {
+  Game m_game;
+  GamePlayer m_player;
+  GameStrategy m_strategy, m_refStrategy;
+  int m_strategyIndex{0}, m_refStrategyIndex{0};
+
+public:
+  RatioEquation(const GameStrategy &p_strategy, const GameStrategy &p_refStrategy)
+    : m_game(p_strategy->GetGame()), m_player(p_strategy->GetPlayer()), m_strategy(p_strategy),
+      m_refStrategy(p_refStrategy)
+  {
+    int col = 1;
+    for (const auto &strategy : m_game->GetStrategies()) {
+      if (strategy == p_strategy) {
+        m_strategyIndex = col;
+      }
+      else if (strategy == p_refStrategy) {
+        m_refStrategyIndex = col;
+      }
+      col++;
+    }
+  }
+
+  ~RatioEquation() override = default;
+  double Value(const MixedStrategyProfile<double> &p_profile,
+               const MixedStrategyProfile<double> &p_logProfile,
+               const Vector<double> &p_strategyValues, double p_lambda) const override;
+};
+
+double RatioEquation::Value(const MixedStrategyProfile<double> &p_profile,
+                            const MixedStrategyProfile<double> &p_logProfile,
+                            const Vector<double> &p_strategyValues, double p_lambda) const
+{
+  return p_logProfile[m_strategyIndex] - p_logProfile[m_refStrategyIndex] -
+         p_lambda * (p_strategyValues[m_strategyIndex] - p_strategyValues[m_refStrategyIndex]);
+}
+
+class EquationSystem {
+public:
+  explicit EquationSystem(const Game &p_game);
+  ~EquationSystem() = default;
+
+  void GetValue(const Vector<double> &p_point, Vector<double> &p_lhs) const;
+  void GetJacobian(const Vector<double> &p_point, Matrix<double> &p_jac) const;
+
+private:
+  std::vector<std::shared_ptr<Equation>> m_equations;
+  Game m_game;
+  mutable MixedStrategyProfile<double> m_profile, m_logProfile;
+  mutable Vector<double> m_strategyValues;
+  // Payoffs of one player's strategies and their derivatives, reused across players
+  mutable Vector<double> m_blockValues;
+  mutable Matrix<double> m_blockDerivs;
+};
+
+EquationSystem::EquationSystem(const Game &p_game)
+  : m_game(p_game), m_profile(p_game->NewMixedStrategyProfile(0.0)),
+    m_logProfile(p_game->NewMixedStrategyProfile(0.0)),
+    m_strategyValues(m_profile.MixedProfileLength())
+{
+  m_equations.reserve(m_profile.MixedProfileLength());
+  for (const auto &player : m_game->GetPlayers()) {
+    m_equations.push_back(std::make_shared<SumToOneEquation>(player));
+    auto strategies = player->GetStrategies();
+    for (auto strategy = std::next(strategies.begin()); strategy != strategies.end(); ++strategy) {
+      m_equations.push_back(std::make_shared<RatioEquation>(*strategy, strategies.front()));
+    }
+  }
+}
+
+void EquationSystem::GetValue(const Vector<double> &p_point, Vector<double> &p_lhs) const
+{
+  PointToProfile(m_profile, p_point);
+  PointToLogProfile(m_logProfile, p_point);
+  const double lambda = p_point.back();
+  int col = 1;
+  for (const auto &strategy : m_game->GetStrategies()) {
+    m_strategyValues[col++] = m_profile.GetPayoff(strategy);
+  }
+  std::transform(m_equations.begin(), m_equations.end(), p_lhs.begin(), [this, lambda](auto e) {
+    return e->Value(m_profile, m_logProfile, m_strategyValues, lambda);
+  });
+}
+
+void EquationSystem::GetJacobian(const Vector<double> &p_point, Matrix<double> &p_jac) const
+{
+  // Rows of p_jac are variables (log probabilities, then lambda); columns are equations: for
+  // each player, that their probabilities sum to one, then one for each strategy but the first
+  // relating its log probability to that of the first.
+  PointToProfile(m_profile, p_point);
+  const double lambda = p_point.back();
+  const size_t length = p_point.size() - 1;
+  p_jac = 0.0;
+  size_t column = 1;
+  size_t first = 1; // position in the profile of the current player's first strategy
+  for (const auto &player : m_game->GetPlayers()) {
+    m_profile.GetPayoffDerivBlock(player, m_blockValues, m_blockDerivs);
+    const size_t last = first + m_blockValues.size() - 1;
+    for (size_t var = first; var <= last; var++) {
+      p_jac(var, column) = m_profile[var];
+    }
+    column++;
+    for (size_t r = 2; r <= m_blockValues.size(); r++, column++) {
+      for (size_t var = 1; var <= length; var++) {
+        if (var < first || var > last) {
+          p_jac(var, column) =
+              -lambda * m_profile[var] * (m_blockDerivs(r, var) - m_blockDerivs(1, var));
+        }
+      }
+      p_jac(first + r - 1, column) = 1.0;
+      p_jac(first, column) = -1.0;
+      p_jac(length + 1, column) = m_blockValues[1] - m_blockValues[r];
+    }
+    first = last + 1;
+  }
+}
+
+class TracingCallbackFunction {
+public:
+  TracingCallbackFunction(const Game &p_game,
+                          LogitEventCallbackType<LogitQREMixedStrategyProfile> p_onEvent)
+    : m_game(p_game), m_onEvent(p_onEvent)
+  {
+  }
+  ~TracingCallbackFunction() = default;
+
+  void AppendPoint(const Vector<double> &p_point);
+  void OnBifurcation(const Vector<double> &p_before, const Vector<double> &p_after);
+  void OnPerturbation(bool p_active, const Vector<double> &p_point);
+  const std::list<LogitQREMixedStrategyProfile> &GetProfiles() const { return m_profiles; }
+  const std::vector<LogitBifurcation<LogitQREMixedStrategyProfile>> &GetBifurcations() const
+  {
+    return m_bifurcations;
+  }
+
+private:
+  LogitQREMixedStrategyProfile PointToQRE(const Vector<double> &p_point) const;
+
+  Game m_game;
+  LogitEventCallbackType<LogitQREMixedStrategyProfile> m_onEvent;
+  std::list<LogitQREMixedStrategyProfile> m_profiles;
+  std::vector<LogitBifurcation<LogitQREMixedStrategyProfile>> m_bifurcations;
+};
+
+LogitQREMixedStrategyProfile
+TracingCallbackFunction::PointToQRE(const Vector<double> &p_point) const
+{
+  MixedStrategyProfile<double> profile(m_game->NewMixedStrategyProfile(0.0));
+  PointToProfile(profile, p_point);
+  return {profile, p_point.back(), 1.0};
+}
+
+void TracingCallbackFunction::AppendPoint(const Vector<double> &p_point)
+{
+  m_profiles.push_back(PointToQRE(p_point));
+  m_onEvent(LogitPathEvent<LogitQREMixedStrategyProfile>{m_profiles.back()});
+}
+
+void TracingCallbackFunction::OnBifurcation(const Vector<double> &p_before,
+                                            const Vector<double> &p_after)
+{
+  m_bifurcations.push_back({PointToQRE(p_before), PointToQRE(p_after)});
+  const auto &bifurcation = m_bifurcations.back();
+  m_onEvent(
+      LogitBifurcationEvent<LogitQREMixedStrategyProfile>{bifurcation.before, bifurcation.after});
+}
+
+void TracingCallbackFunction::OnPerturbation(bool p_active, const Vector<double> &p_point)
+{
+  const auto qre = PointToQRE(p_point);
+  m_onEvent(LogitPerturbationEvent<LogitQREMixedStrategyProfile>{p_active, qre});
+}
+
+class EstimatorCallbackFunction {
+public:
+  EstimatorCallbackFunction(const Game &p_game, const Vector<double> &p_frequencies,
+                            LogitEventCallbackType<LogitQREMixedStrategyProfile> p_onEvent);
+  ~EstimatorCallbackFunction() = default;
+
+  void EvaluatePoint(const Vector<double> &p_point);
+  void OnBifurcation(const Vector<double> &p_before, const Vector<double> &p_after);
+  void OnPerturbation(bool p_active, const Vector<double> &p_point);
+
+  const LogitQREMixedStrategyProfile &GetMaximizer() const { return m_bestProfile; }
+
+private:
+  LogitQREMixedStrategyProfile PointToQRE(const Vector<double> &p_point) const;
+
+  Game m_game;
+  const Vector<double> &m_frequencies;
+  LogitEventCallbackType<LogitQREMixedStrategyProfile> m_onEvent;
+  LogitQREMixedStrategyProfile m_bestProfile;
+};
+
+EstimatorCallbackFunction::EstimatorCallbackFunction(
+    const Game &p_game, const Vector<double> &p_frequencies,
+    LogitEventCallbackType<LogitQREMixedStrategyProfile> p_onEvent)
+  : m_game(p_game), m_frequencies(p_frequencies), m_onEvent(p_onEvent),
+    m_bestProfile(p_game->NewMixedStrategyProfile(0.0), 0.0,
+                  LogLike(p_frequencies, p_game->NewMixedStrategyProfile(0.0).GetProbVector()))
+{
+}
+
+LogitQREMixedStrategyProfile
+EstimatorCallbackFunction::PointToQRE(const Vector<double> &p_point) const
+{
+  MixedStrategyProfile<double> profile(m_game->NewMixedStrategyProfile(0.0));
+  PointToProfile(profile, p_point);
+  return {profile, p_point.back(), LogLike(m_frequencies, profile.GetProbVector())};
+}
+
+void EstimatorCallbackFunction::EvaluatePoint(const Vector<double> &p_point)
+{
+  auto qre = PointToQRE(p_point);
+  m_onEvent(LogitPathEvent<LogitQREMixedStrategyProfile>{qre});
+  if (qre.GetLogLike() > m_bestProfile.GetLogLike()) {
+    m_bestProfile = qre;
+  }
+}
+
+void EstimatorCallbackFunction::OnBifurcation(const Vector<double> &p_before,
+                                              const Vector<double> &p_after)
+{
+  const auto before = PointToQRE(p_before);
+  const auto after = PointToQRE(p_after);
+  m_onEvent(LogitBifurcationEvent<LogitQREMixedStrategyProfile>{before, after});
+}
+
+void EstimatorCallbackFunction::OnPerturbation(bool p_active, const Vector<double> &p_point)
+{
+  const auto qre = PointToQRE(p_point);
+  m_onEvent(LogitPerturbationEvent<LogitQREMixedStrategyProfile>{p_active, qre});
+}
+
+} // namespace
+
+LogitTrace<LogitQREMixedStrategyProfile>
+LogitStrategySolve(const LogitQREMixedStrategyProfile &p_start, double p_regret,
+                   PathTracer::TraceDirection p_direction, double p_firstStep, double p_maxAccel,
+                   Nash::StrategyCallbackType<double> p_onEquilibrium,
+                   LogitEventCallbackType<LogitQREMixedStrategyProfile> p_onEvent,
+                   const CancelToken &p_cancel)
+{
+  if (p_start.size() == 0) {
+    return {{p_start}, {}};
+  }
+  PathTracer tracer;
+  tracer.SetMaxDecel(p_maxAccel);
+  tracer.SetStepsize(p_firstStep);
+
+  if (const double scale = p_start.GetGame()->GetMaxPayoff() - p_start.GetGame()->GetMinPayoff();
+      scale != 0.0) {
+    p_regret *= scale;
+  }
+
+  const Game game = p_start.GetGame();
+  Vector<double> x(ProfileToPoint(p_start));
+  TracingCallbackFunction callback(game, p_onEvent);
+  EquationSystem system(game);
+  const auto result = tracer.TracePath(
+      [&system](const Vector<double> &p_point, Vector<double> &p_lhs) {
+        system.GetValue(p_point, p_lhs);
+      },
+      [&system](const Vector<double> &p_point, Matrix<double> &p_jac) {
+        system.GetJacobian(p_point, p_jac);
+      },
+      x, p_direction, x.size(),
+      [p_start, p_regret](const Vector<double> &p_point) {
+        return RegretTerminationFunction(p_start.GetGame(), p_point, p_regret);
+      },
+      [&callback](const Vector<double> &p_point) -> void { callback.AppendPoint(p_point); },
+      NullCriterionFunction, NullCriterionBracketFunction, p_cancel,
+      [&callback](const Vector<double> &p_before, const Vector<double> &p_after) {
+        callback.OnBifurcation(p_before, p_after);
+      },
+      [&callback](bool p_active, const Vector<double> &p_point) {
+        callback.OnPerturbation(p_active, p_point);
+      });
+  const auto &profiles = callback.GetProfiles();
+  if (profiles.back().GetProfile().GetMaxRegret() < p_regret) {
+    p_onEquilibrium(profiles.back().GetProfile());
+  }
+  return {profiles, callback.GetBifurcations(), {result.stats}};
+}
+
+LogitLambdaResult<LogitQREMixedStrategyProfile> LogitStrategySolveLambda(
+    const LogitQREMixedStrategyProfile &p_start, const std::list<double> &p_targetLambda,
+    PathTracer::TraceDirection p_direction, double p_firstStep, double p_maxAccel,
+    LogitEventCallbackType<LogitQREMixedStrategyProfile> p_onEvent)
+{
+  if (p_start.size() == 0) {
+    return {{p_start}, {}};
+  }
+  PathTracer tracer;
+  tracer.SetMaxDecel(p_maxAccel);
+  tracer.SetStepsize(p_firstStep);
+
+  const Game game = p_start.GetGame();
+  Vector x(ProfileToPoint(p_start));
+  TracingCallbackFunction callback(game, p_onEvent);
+  LogitLambdaResult<LogitQREMixedStrategyProfile> ret;
+  EquationSystem system(game);
+  for (auto lam : p_targetLambda) {
+    const auto result = tracer.TracePath(
+        [&system](const Vector<double> &p_point, Vector<double> &p_lhs) {
+          system.GetValue(p_point, p_lhs);
+        },
+        [&system](const Vector<double> &p_point, Matrix<double> &p_jac) {
+          system.GetJacobian(p_point, p_jac);
+        },
+        x, p_direction, x.size(), LambdaPositiveTerminationFunction,
+        [&callback](const Vector<double> &p_point) -> void { callback.AppendPoint(p_point); },
+        [lam](const Vector<double> &x, const Vector<double> &) -> double {
+          return x.back() - lam;
+        },
+        NullCriterionBracketFunction, CancelToken(),
+        [&callback](const Vector<double> &p_before, const Vector<double> &p_after) {
+          callback.OnBifurcation(p_before, p_after);
+        },
+        [&callback](bool p_active, const Vector<double> &p_point) {
+          callback.OnPerturbation(p_active, p_point);
+        });
+    ret.profiles.push_back(callback.GetProfiles().back());
+    ret.stats.push_back(result.stats);
+  }
+  return ret;
+}
+
+LogitQREMixedStrategyProfile
+LogitStrategyEstimate(const MixedStrategyProfile<double> &p_frequencies, double p_maxLambda,
+                      PathTracer::TraceDirection p_direction, double p_stopAtLocal,
+                      double p_firstStep, double p_maxAccel,
+                      LogitEventCallbackType<LogitQREMixedStrategyProfile> p_onEvent)
+{
+  const LogitQREMixedStrategyProfile start(p_frequencies.GetGame());
+  if (start.size() == 0) {
+    return start;
+  }
+  PathTracer tracer;
+  tracer.SetMaxDecel(p_maxAccel);
+  tracer.SetStepsize(p_firstStep);
+
+  const Game game = start.GetGame();
+  Vector<double> x(ProfileToPoint(start)), restart(x);
+  const Vector freq_vector(p_frequencies.GetProbVector());
+  EstimatorCallbackFunction callback(game, p_frequencies.GetProbVector(), p_onEvent);
+  EquationSystem system(game);
+  while (true) {
+    tracer.TracePath(
+        [&system](const Vector<double> &p_point, Vector<double> &p_lhs) {
+          system.GetValue(p_point, p_lhs);
+        },
+        [&system](const Vector<double> &p_point, Matrix<double> &p_jac) {
+          system.GetJacobian(p_point, p_jac);
+        },
+        x, p_direction, x.size(),
+        [p_maxLambda](const Vector<double> &p_point) {
+          return LambdaRangeTerminationFunction(p_point, 0, p_maxLambda);
+        },
+        [&callback](const Vector<double> &p_point) -> void { callback.EvaluatePoint(p_point); },
+        [freq_vector](const Vector<double> &, const Vector<double> &p_tangent) -> double {
+          return DiffLogLike(freq_vector, p_tangent);
+        },
+        [&restart](const Vector<double> &, const Vector<double> &p_restart) -> void {
+          restart = p_restart;
+        },
+        CancelToken(),
+        [&callback](const Vector<double> &p_before, const Vector<double> &p_after) {
+          callback.OnBifurcation(p_before, p_after);
+        },
+        [&callback](bool p_active, const Vector<double> &p_point) {
+          callback.OnPerturbation(p_active, p_point);
+        });
+    if (p_stopAtLocal || x.back() >= p_maxLambda) {
+      break;
+    }
+    x = restart;
+  }
+  return callback.GetMaximizer();
+}
+
+} // end namespace Gambit

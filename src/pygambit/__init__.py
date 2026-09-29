@@ -1,6 +1,6 @@
 #
 # This file is part of Gambit
-# Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+# Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 #
 # FILE: src/python/gambit/__init__.py
 # Top-level module file for gambit
@@ -20,14 +20,21 @@
 # Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 #
 
-from . import lib
-from . import nash
-from . import gte
+from .gambit import *  # noqa: F401,F403,I001
 
-__version__ = "16.0.1"
-Rational = lib.libgambit.Rational
-Decimal = lib.libgambit.Decimal
+from . import (  # noqa: F401
+    nash,  # noqa: F401
+    qre,  # noqa: F401
+    supports,  # noqa: F401
+    catalog,
+)
 
-class Game(lib.libgambit.Game): pass
+import importlib.metadata
 
-
+try:
+    __version__ = importlib.metadata.version("pygambit")
+except importlib.metadata.PackageNotFoundError:
+    # Package is not installed, fallback to reading GAMBIT_VERSION file
+    import pathlib
+    _version_file = pathlib.Path(__file__).parent.parent.parent / "build_support/GAMBIT_VERSION"
+    __version__ = _version_file.read_text().strip() if _version_file.exists() else "unknown"

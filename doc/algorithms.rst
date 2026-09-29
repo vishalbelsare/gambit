@@ -1,0 +1,290 @@
+.. _algorithms:
+
+Equilibrium computation
+=======================
+
+The table below summarizes the available PyGambit functions and corresponding Gambit CLI programs
+for algorithms for computing Nash equilibria.
+
+================  ===========================================================================   ========================================  ==========================================
+Algorithm         Description                                                                   PyGambit function                         CLI command
+================  ===========================================================================   ========================================  ==========================================
+:ref:`enumpure`   Enumerate pure-strategy equilibria of a game                                  :py:func:`pygambit.nash.enumpure_solve`   :ref:`gambit-enumpure <gambit-enumpure>`
+:ref:`enummixed`  Enumerate equilibria in a two-player game                                     :py:func:`pygambit.nash.enummixed_solve`  :ref:`gambit-enummixed <gambit-enummixed>`
+:ref:`enumpoly`   Compute equilibria of a game using polynomial systems of equations            :py:func:`pygambit.nash.enumpoly_solve`   :ref:`gambit-enumpoly <gambit-enumpoly>`
+:ref:`lp`         Compute equilibria in a two-player constant-sum game via linear programming   :py:func:`pygambit.nash.lp_solve`         :ref:`gambit-lp <gambit-lp>`
+:ref:`lcp`        Compute equilibria in a two-player game via linear complementarity            :py:func:`pygambit.nash.lcp_solve`        :ref:`gambit-lcp <gambit-lcp>`
+:ref:`liap`       Compute equilibria using function minimization                                :py:func:`pygambit.nash.liap_solve`       :ref:`gambit-liap <gambit-liap>`
+:ref:`logit`      Trace logit QRE and approximate a Nash equilibrium at high precision          :py:func:`pygambit.nash.logit_solve`      :ref:`gambit-logit <gambit-logit>`
+:ref:`simpdiv`    Compute equilibria via simplicial subdivision                                 :py:func:`pygambit.nash.simpdiv_solve`    :ref:`gambit-simpdiv <gambit-simpdiv>`
+:ref:`ipa`        Compute equilibria using iterated polymatrix approximation                    :py:func:`pygambit.nash.ipa_solve`        :ref:`gambit-ipa <gambit-ipa>`
+:ref:`gnm`        Compute equilibria using a global Newton method                               :py:func:`pygambit.nash.gnm_solve`        :ref:`gambit-gnm <gambit-gnm>`
+:ref:`hp`         Compute a specific Nash equilibrium using a homotopy path-following method    :py:func:`pygambit.nash.hp_solve`         :ref:`gambit-hp <gambit-hp>`
+================  ===========================================================================   ========================================  ==========================================
+
+.. _pygambit-nash-maxregret:
+
+Acceptance criteria for approximate Nash equilibria
+----------------------------------------------------
+
+Some methods for computing Nash equilibria operate using floating-point arithmetic and/or
+generate candidate equilibrium profiles using methods which involve some form of successive
+approximation.  The outputs of these methods therefore are in general
+:math:`\varepsilon`-equilibria, for some positive :math:`\varepsilon`: a strategy profile at
+which no player can gain more than :math:`\varepsilon` in expected payoff by unilaterally
+deviating.  Every Nash equilibrium is an :math:`\varepsilon`-equilibrium with
+:math:`\varepsilon = 0`.
+
+To provide a uniform interface across methods, where relevant Gambit provides a parameter
+`maxregret`, which specifies the acceptance criterion for labeling the output of the
+algorithm as an equilibrium.  This parameter is interpreted *proportionally* to the range of
+payoffs in the game: any profile returned as an equilibrium is guaranteed to be an
+:math:`\varepsilon`-equilibrium, for :math:`\varepsilon` no more than `maxregret` times the
+difference of the game's maximum and minimum payoffs.  For example, with the default
+`maxregret` of :math:`10^{-8}` in a game whose payoffs range over 4 units, any equilibrium
+returned is guaranteed to have a regret, measured directly in the game's own payoffs, of no
+more than :math:`4 \times 10^{-8}`.
+
+Expressing `maxregret` scaled by the game's payoffs in this way standardises the behavior of
+methods across games: for instance, doubling all the payoffs in a game does not change the
+`maxregret` value needed to obtain equilibria of comparable quality.
+
+Methods differ in the guarantees they offer once a `maxregret` criterion is specified.
+Globally-convergent methods, such as :ref:`logit` and :ref:`gnm`, are guaranteed to eventually
+satisfy any `maxregret` criterion, though a tighter criterion generally requires more
+computation.  Other methods, such as :ref:`liap`, are not globally convergent, and may fail to
+find any equilibrium satisfying the criterion from a given starting point.
+
+See the :doc:`stripped-down poker tutorial <tutorials/03_stripped_down_poker>` for a worked
+example comparing `maxregret` across several methods.
+
+.. _enumpure:
+
+enumpure
+--------
+
+Searches for pure-strategy Nash or agent Nash equilibria.
+
+.. _enummixed:
+
+enummixed
+---------
+
+Computes Nash equilibria using extreme point enumeration.
+
+In a two-player strategic game, the set of Nash equilibria can be expressed as the union of convex sets.
+This program generates all the extreme points of those convex sets. (Mangasarian :cite:p:`Man64`)
+This is a superset of the points generated by the path-following procedure of Lemke and Howson (see :ref:`lcp`).
+It was shown by Shapley :cite:p:`Shap74` that there are equilibria not accessible via the method in :ref:`lcp`, whereas the output of
+:program:`enummixed` is guaranteed to return all the extreme points.
+
+.. _enumpoly:
+
+enumpoly
+--------
+
+Computes Nash equilibria by solving systems of polynomial equations
+and inequalities.
+
+This program searches for all Nash equilibria in a strategic game
+using a support enumeration approach. This approach computes all the
+supports which could, in principle, be the support of a Nash
+equilibrium.  For each candidate support, it attempts to compute
+totally mixed equilibria on that support by successively subdividing
+the space of mixed strategy profiles or mixed behavior profiles (as appropriate).
+By using the fact that the equilibrium conditions imply a collection
+of equations and inequalities which can be expressed as multilinear
+polynomials, the subdivision constructed is such that each cell
+contains either no equilibria or exactly one equilibrium.
+
+For strategic games, the program searches supports in the order proposed
+by Porter, Nudelman, and Shoham :cite:p:`PNS04`.  For two-player games, this
+prioritises supports for which both players have the same number of
+strategies.  For games with three or more players, this prioritises
+supports which have the fewest strategies in total.  For many classes
+of games, this will tend to lower the average time until finding one equilibrium,
+as well as finding the second equilibrium (if one exists).
+
+For extensive games, a support of actions equates to allowing positive
+probabilities over a subset of terminal nodes.  The indifference conditions
+used are those for the sequence form defined on the projection of the game
+to that support of actions.  A solution to these equations implies a probability
+distribution over terminal nodes.  The algorithm then searches for
+a profile that is a Nash equilibrium that implements that probability
+distribution.  If there exists at least one such profile, a sample one is returned.
+Note that for probability distributions which assign zero probability to some terminal
+nodes, it is generally the case that there are (infinitely) many such profiles.
+Subsequent analysis of unreached information sets can yield alternative
+profiles that specify different choices at unreached information sets
+while still satisfying the Nash equilibrium conditions.
+
+The subdivision process for a given support is guaranteed to terminate, because
+subdivision stops once a cell shrinks below a minimum size.  However, this bound
+is on the *depth* of subdivision, not on the *number* of cells examined to reach
+that depth.  As protection against pathological cases, the number of cells
+examined per support is capped (via ``max_rectangles`` in
+:py:func:`pygambit.nash.enumpoly_solve`, or :option:`gambit-enumpoly -r` for
+:program:`gambit-enumpoly`); if this limit is reached before the search of a
+support is complete, that support may be reported with incomplete equilibria,
+and (in verbose mode) is identified with the label "budget-exceeded" -- see
+:ref:`gambit-enumpoly <gambit-enumpoly>` for details.
+
+.. _lp:
+
+lp
+---
+
+Computes a Nash equilibrium in a two-player game by solving a linear program.
+For extensive games, the
+program uses the sequence form formulation of Koller, Megiddo, and von
+Stengel :cite:p:`KolMegSte94`.
+
+While the set of equilibria in a two-player constant-sum strategic
+game is convex, this method will only identify one of the extreme
+points of that set.
+
+.. _lcp:
+
+lcp
+---
+
+Computes Nash equilibria of a two-player game by finding solutions to a linear
+complementarity problem. For extensive games, the program uses the
+sequence form representation of the extensive game, as defined by
+Koller, Megiddo, and von Stengel :cite:p:`KolMegSte94`, and applies the
+algorithm developed by Lemke.
+
+For strategic games, the program uses the method of Lemke and Howson
+:cite:p:`LemHow64`. In this case, the method will find all "accessible"
+equilibria, i.e., those that can be found as concatenations of Lemke-Howson
+paths that start at the artificial equilibrium.
+There exist strategic-form games for which some equilibria cannot be found
+by this method, i.e., some equilibria are inaccessible; see Shapley :cite:p:`Shap74`.
+
+In a two-player strategic game, the set of Nash equilibria can be expressed
+as the union of convex sets. This program will find extreme points
+of those convex sets.  See :ref:`enummixed` for a method
+which is guaranteed to find all the extreme points for a strategic
+game.
+
+.. _liap:
+
+liap
+----
+
+Computes approximate Nash equilibria using a function minimization approach.
+
+This procedure searches for equilibria by generating random starting
+points and using conjugate gradient descent to minimize the Lyapunov
+function of the game. This is a nonnegative function which is
+zero exactly at strategy profiles which are Nash equilibria.
+
+Note that this procedure is not globally convergent. That is, it is
+not guaranteed to find all, or even any, Nash equilibria.
+
+.. _logit:
+
+logit
+-----
+
+Computes the
+principal branch of the (logit) quantal response correspondence.
+Following this branch toward large values of the precision parameter
+provides an approximation to a Nash equilibrium.  The graphical
+interface uses this limiting calculation when it selects ``logit`` as
+the recommended method for computing one Nash equilibrium.
+
+The method is based on the procedure described in Turocy :cite:p:`Tur05` for
+strategic games and Turocy :cite:p:`Tur10` for extensive games.
+It uses standard path-following methods (as
+described in Allgower and Georg's "Numerical Continuation Methods") to
+adaptively trace the principal branch of the correspondence
+efficiently and securely.
+
+The method used is a predictor-corrector method, which first generates
+a prediction using the differential equations describing the branch of
+the correspondence, followed by a corrector step which refines the
+prediction using Newton's method for finding a zero of a function. Two
+parameters control the operation of this tracing.
+
+The algorithm accepts an initial step size for the predictor phase of the tracing. This
+step size is then dynamically adjusted based on the rate of
+convergence of Newton's method in the corrector step. If the
+convergence is fast, the step size is adjusted upward (accelerated);
+if it is slow, the step size is decreased (decelerated). The
+maximum acceleration (or deceleration) can be set as an argument.  As described in
+Turocy :cite:p:`Tur05`, this acceleration helps to
+efficiently trace the correspondence when it reaches its asymptotic
+phase for large values of the precision parameter lambda.
+
+In extensive games, logit quantal response equilibria are not well-defined
+if an information set is not reached due to being the successor of chance
+moves with zero probability.  In such games, the implementation treats
+the beliefs at such information sets as being uniform across all member nodes.
+
+.. _simpdiv:
+
+simpdiv
+--------
+
+Computes approximations to Nash equilibria using a simplicial subdivision
+approach.
+
+This program implements the algorithm of van der Laan, Talman, and van
+Der Heyden :cite:p:`VTH87`. The algorithm proceeds by constructing a triangulated grid
+over the space of mixed strategy profiles, and uses a path-following
+method to compute an approximate fixed point. This approximate fixed
+point can then be used as a starting point on a refinement of the
+grid. The program continues this process with finer and finer grids
+until locating a mixed strategy profile at which the maximum regret is
+small.
+
+.. _ipa:
+
+ipa
+---
+
+Computes Nash
+equilibria using an iterated polymatrix approximation approach
+developed by Govindan and Wilson :cite:p:`GovWil04`.
+This program is based on the
+`Gametracer 0.2 <http://dags.stanford.edu/Games/gametracer.html>`_
+implementation by Ben Blum and Christian Shelton.
+
+The algorithm takes as a parameter a mixed strategy profile.  This profile is
+interpreted as defining a ray in the space of games.  The profile must have
+the property that, for each player, the most frequently played strategy must
+be unique.
+
+.. _gnm:
+
+gnm
+---
+
+Computes Nash
+equilibria using a global Newton method approach developed by Govindan
+and Wilson :cite:p:`GovWil03`. This program is based on the
+`Gametracer 0.2 <http://dags.stanford.edu/Games/gametracer.html>`_
+implementation by Ben Blum and Christian Shelton.
+
+The algorithm takes as a parameter a mixed strategy profile.  This profile is
+interpreted as defining a ray in the space of games.  The profile must have
+the property that, for each player, the most frequently played strategy must
+be unique.
+
+.. _hp:
+
+hp
+---
+Computes the Nash equilibrium selected by the tracing procedure
+of Harsanyi and Selten using a homotopy path-following method.  The algorithm
+was first described by Herings and Peeters :cite:p:`HerPee01`.
+
+The algorithm takes as a parameter a mixed strategy profile, which acts as
+the subjective prior beliefs of the players.
+The profile must have the property that, for each player,
+there must only exist one best response.
+
+For generic games, the algorithm converges to the unique Nash equilibrium selected by
+the tracing procedure of Harsanyi and Selten. For non-generic games, the algorithm may
+converge to a Nash equilibrium that is not selected by the tracing procedure.

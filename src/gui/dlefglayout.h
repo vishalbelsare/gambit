@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dlefglayout.h
 // Declaration of dialog to set tree layout parameters
@@ -20,14 +20,14 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef DLEFGLAYOUT_H
-#define DLEFGLAYOUT_H
+#ifndef GAMBIT_GUI_DLEFGLAYOUT_H
+#define GAMBIT_GUI_DLEFGLAYOUT_H
 
 #include <wx/notebook.h>
 #include "style.h"
 
-class gbtLayoutDialog : public wxDialog {
-private:
+namespace Gambit::GUI {
+class LayoutDialog final : public wxDialog {
   bool m_toDefaults;
   wxNotebook *m_notebook;
 
@@ -36,11 +36,11 @@ private:
 
 public:
   // Lifecycle
-  gbtLayoutDialog(wxWindow *p_parent, const gbtStyle &);
+  LayoutDialog(wxWindow *p_parent, const TreeRenderConfig &);
 
   // Data access (only valid when ShowModal() returns with wxID_OK)
-  void GetSettings(gbtStyle &);
+  void GetSettings(TreeRenderConfig &) const;
 };
+} // namespace Gambit::GUI
 
-#endif  // DLEFGLAYOUT_H
-
+#endif // GAMBIT_GUI_DLEFGLAYOUT_H

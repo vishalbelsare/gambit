@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/array.h
+// FILE: src/core/array.h
 // A basic bounds-checked array type
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,247 +20,117 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef LIBGAMBIT_ARRAY_H
-#define LIBGAMBIT_ARRAY_H
+#ifndef GAMBIT_CORE_ARRAY_H
+#define GAMBIT_CORE_ARRAY_H
+
+#include <vector>
+#include <iterator>
+
+#include "util.h"
 
 namespace Gambit {
 
-/// A basic bounds-checked array
-template <class T> class Array  {
+/// An extension of std::vector with an arbitrary offset index
+///
+/// This is a variation on std::vector, which allows for the index of the first
+/// element to be something other than zero.
+template <class T> class Array {
 protected:
-  int mindex, maxdex;
-  T *data;
+  int m_offset;
+  std::vector<T> m_data;
 
-  /// Private helper function that accomplishes the insertion of an object
-  int InsertAt(const T &t, int n)
+  bool is_in_range(const int p_index) const
   {
-    if (this->mindex > n || n > this->maxdex + 1)  throw IndexException();
-
-    T *new_data = new T[++this->maxdex - this->mindex + 1] - this->mindex;
-
-    int i;
-    for (i = this->mindex; i <= n - 1; i++) new_data[i] = this->data[i];
-    new_data[i++] = t;
-    for (; i <= this->maxdex; i++) new_data[i] = this->data[i - 1];
-
-    if (this->data)   delete [] (this->data + this->mindex);
-    this->data = new_data;
-
-    return n;
+    return p_index >= m_offset && p_index <= back_index();
   }
+
 public:
-  class iterator {
-  private:
-    const Array &m_array;
-    int m_index;
-  public:
-    iterator(const Array &p_array, int p_index)
-      : m_array(p_array), m_index(p_index)  { }
-    T &operator*(void) const { return m_array[m_index]; }
-    T &operator->(void) const { return m_array[m_index]; }
-    iterator &operator++(void)  { m_index++; return *this; }
-    bool operator==(const iterator &it) const
-    { return (&m_array == &it.m_array) && (m_index == it.m_index); }
-    bool operator!=(const iterator &it) const
-    { return !(*this == it); }
-  };
+  using iterator = typename std::vector<T>::iterator;
+  using const_iterator = typename std::vector<T>::const_iterator;
+  using value_type = typename std::vector<T>::value_type;
+  using reference = typename std::vector<T>::reference;
+  using const_reference = typename std::vector<T>::const_reference;
 
-  class const_iterator {
-  private:
-    const Array &m_array;
-    int m_index;
-  public:
-    const_iterator(const Array &p_array, int p_index)
-      : m_array(p_array), m_index(p_index)  { }
-    const T &operator*(void) const { return m_array[m_index]; }
-    const T &operator->(void) const { return m_array[m_index]; }
-    const_iterator &operator++(void)  { m_index++; return *this; }
-    bool operator==(const const_iterator &it) const
-    { return (&m_array == &it.m_array) && (m_index == it.m_index); }
-    bool operator!=(const const_iterator &it) const
-    { return !(*this == it); }
-  };
-
-  /// @name Lifecycle
-  //@{
-  /// Constructs an array of length 'len', starting at '1'
-  Array(unsigned int len = 0)
-    : mindex(1), maxdex(len), data((len) ? new T[len] - 1 : 0) { } 
-  /// Constructs an array starting at lo and ending at hi
-  Array(int lo, int hi) : mindex(lo), maxdex(hi)
+  Array() : m_offset(1) {}
+  explicit Array(size_t p_length) : m_offset(1), m_data(p_length) {}
+  /// Construct an array with the given index bounds.
+  /// If p_high is less than p_low, the resulting array will have
+  /// front_index equal to p_low, and size 0.
+  explicit Array(const int p_low, const int p_high) : m_offset(p_low)
   {
-    if (maxdex + 1 < mindex)   throw RangeException();
-    data = (maxdex >= mindex) ? new T[maxdex -mindex + 1] - mindex : 0;
-  }
-  /// Copy the contents of another array
-  Array(const Array<T> &a)
-    : mindex(a.mindex), maxdex(a.maxdex),
-      data((maxdex >= mindex) ? new T[maxdex - mindex + 1] - mindex : 0)
-  {
-    for (int i = mindex; i <= maxdex; i++)  data[i] = a.data[i];
-  }
-  /// Destruct and deallocates the array
-  virtual ~Array()
-  { if (maxdex >= mindex)  delete [] (data + mindex); }
-
-  /// Copy the contents of another array
-  Array<T> &operator=(const Array<T> &a)
-  {
-    if (this != &a) {
-      // We only reallocate if necessary.  This should be somewhat faster
-      // if many objects are of the same length.  Furthermore, it is
-      // _essential_ for the correctness of the PVector and DVector
-      // assignment operator, since it assumes the value of data does
-      // not change.
-      if (!data || (data && (mindex != a.mindex || maxdex != a.maxdex)))  {
-	if (data)   delete [] (data + mindex);
-	mindex = a.mindex;   maxdex = a.maxdex;
-	data = (maxdex >= mindex) ? new T[maxdex - mindex + 1] - mindex : 0;
-      }
-      
-      for (int i = mindex; i <= maxdex; i++) data[i] = a.data[i];
+    if (p_high >= p_low) {
+      m_data.resize(p_high - p_low + 1);
     }
+  }
+  Array(const Array &) = default;
+  Array(Array &&) noexcept = default;
+  ~Array() = default;
 
-    return *this;
+  Array &operator=(const Array &) = default;
+  Array &operator=(Array &&) noexcept = default;
+
+  bool operator==(const Array &p_other) const
+  {
+    return m_offset == p_other.m_offset && m_data == p_other.m_data;
   }
 
-  //@}
-
-  /// @name Operator overloading
-  //@{
-  /// Test the equality of two arrays
-  bool operator==(const Array<T> &a) const
+  const_reference operator[](const int p_index) const
   {
-    if (mindex != a.mindex || maxdex != a.maxdex) return false;
-    for (int i = mindex; i <= maxdex; i++) {
-      if ((*this)[i] != a[i]) return false;
+    if (!is_in_range(p_index)) {
+      throw std::out_of_range("Index out of range in Array");
     }
-    return true;
+    return m_data.at(p_index - m_offset);
   }
 
-  /// Test the inequality of two arrays
-  bool operator!=(const Array<T> &a) const { return !(*this == a); }
-  //@}
-
-  /// @name General data access
-  //@{
-  /// Return the length of the array
-  int Length(void) const  { return maxdex - mindex + 1; }
-
-  /// Return the first index
-  int First(void) const { return mindex; } 
-
-  /// Return the last index
-  int Last(void) const { return maxdex; }
-
-  /// Return a forward iterator starting at the beginning of the array
-  const_iterator begin(void) const { return const_iterator(*this, mindex); }
-  /// Return a forward iterator past the end of the array
-  const_iterator end(void) const   { return const_iterator(*this, maxdex + 1); }
-
-  /// Access the index'th entry in the array
-  const T &operator[](int index) const 
+  reference operator[](const int p_index)
   {
-    if (index < mindex || index > maxdex)  throw IndexException();
-    return data[index];
+    if (!is_in_range(p_index)) {
+      throw std::out_of_range("Index out of range in Array");
+    }
+    return m_data.at(p_index - m_offset);
   }
+  const T &front() const { return m_data.front(); }
+  T &front() { return m_data.front(); }
+  const T &back() const { return m_data.back(); }
+  T &back() { return m_data.back(); }
 
-  /// Access the index'th entry in the array
-  T &operator[](int index)
+  iterator begin() { return m_data.begin(); }
+  const_iterator begin() const { return m_data.begin(); }
+  iterator end() { return m_data.end(); }
+  const_iterator end() const { return m_data.end(); }
+  const_iterator cbegin() const { return m_data.cbegin(); }
+  const_iterator cend() const { return m_data.cend(); }
+
+  [[nodiscard]] bool empty() const noexcept { return m_data.empty(); }
+  [[nodiscard]] size_t size() const noexcept { return m_data.size(); }
+  [[nodiscard]] int front_index() const noexcept { return m_offset; }
+  [[nodiscard]] int back_index() const { return m_offset + m_data.size() - 1; }
+
+  void clear() { m_data.clear(); }
+  void insert(const_iterator pos, const T &value) { m_data.insert(pos, value); }
+  void erase(iterator pos) { m_data.erase(pos); }
+  void erase_at(const int p_index)
   {
-    if (index < mindex || index > maxdex)  throw IndexException();
-    return data[index];
+    if (!is_in_range(p_index)) {
+      throw std::out_of_range("Index out of range in Array");
+    }
+    erase(std::next(begin(), p_index - front_index()));
   }
-
-  /// Return the index at which a given element resides in the array.
-  int Find(const T &t) const
+  template <class Pred> void remove_if(Pred p)
   {
-    int i;
-    for (i = this->mindex; i <= this->maxdex && this->data[i] != t; i++);
-    return (i <= this->maxdex) ? i : (mindex-1);
-  } 
+    auto it = std::remove_if(m_data.begin(), m_data.end(), p);
+    m_data.erase(it, m_data.end());
+  }
 
-  /// Return true if the element is currently residing in the array
-  bool Contains(const T &t) const
-  { return Find(t) != mindex-1; }
-  //@}
-
-  /// @name Modifying the contents of the array
-  //@{
-  /// \brief Append a new element to the array.
-  ///
-  /// Append a new element to the array, and return the index at which the
-  /// element can be found.  Note that this index is guaranteed to be the
-  /// last (highest) index in the array.
-  int Append(const T &t)
-  { return InsertAt(t, this->maxdex + 1); }
-
-  /// \brief Insert a new element into the array at a given index.
-  ///
-  /// Insert a new element into the array at a given index.  If the index is
-  /// less than the lowest index, the element is inserted at the beginning;
-  /// if the index is greater than the highest index, the element is appended.
-  /// Returns the index at which the element actually is placed.
-  int Insert(const T &t, int n)
+  void push_back(const T &value) { m_data.push_back(value); }
+  template <class... Args> T &emplace_back(Args &&...args)
   {
-    return InsertAt(t, (n < this->mindex) ? this->mindex : ((n > this->maxdex + 1) ? this->maxdex + 1 : n));
+    return m_data.emplace_back(std::forward<Args>(args)...);
   }
-
-  /// \brief Remove an element from the array.
-  ///
-  /// Remove the element at a given index from the array.  Returns the value
-  /// of the element removed.
-  T Remove(int n)
-  {
-    if (n < this->mindex || n > this->maxdex) throw IndexException();
-
-    T ret(this->data[n]);
-    T *new_data = (--this->maxdex>=this->mindex) ? new T[this->maxdex-this->mindex+1] - this->mindex : 0;
-    
-    int i;
-    for (i = this->mindex; i < n; i++) new_data[i] = this->data[i];
-    for (; i <= this->maxdex; i++)     new_data[i] = this->data[i + 1];
-
-    delete [] (this->data + this->mindex);
-    this->data = new_data;
-
-    return ret;
-  }
-  //@}
-
-  /// @name STL-style interface
-  ///
-  /// These operations are a partial implementation of operations on
-  /// STL-style list containers.  It is suggested that future code be
-  /// written to use these, and existing code ported to use them as
-  /// possible.
-  ///@{
-  /// Return whether the array container is empty (has size 0).
-  bool empty(void) const { return (this->maxdex < this->mindex); }
-  /// Return the number of elements in the array container.
-  size_t size(void) const  { return maxdex - mindex + 1; }
-  /// Access first element.
-  const T &front(void) const { return data[mindex]; }
-  /// Access first element.
-  T &front(void)             { return data[mindex]; }
-  /// Access last element.
-  const T &back(void) const  { return data[maxdex]; }
-  /// Access last element.
-  T &back(void)              { return data[maxdex]; }
-  
-  /// Adds a new element at the end of the array container, after its
-  /// current last element.
-  void push_back(const T &val) { InsertAt(val, this->maxdex + 1); }
-  /// Removes all elements from the array container (which are destroyed),
-  /// leaving the container with a size of 0.
-  void clear(void)  {
-    delete [] (this->data + this->mindex);
-    this->data = 0;
-    this->maxdex = this->mindex - 1;
-  }
-  ///@}
+  void pop_back() { m_data.pop_back(); }
+  void reserve(size_t len) { m_data.reserve(len); }
 };
 
 } // end namespace Gambit
 
-#endif	// LIBGAMBIT_ARRAY_H
+#endif // GAMBIT_CORE_ARRAY_H

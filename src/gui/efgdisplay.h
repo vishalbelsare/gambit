@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/efgdisplay.h
 // Declaration of window class to display extensive form tree
@@ -20,85 +20,168 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef EFGDISPLAY_H
-#define EFGDISPLAY_H
+#ifndef GAMBIT_GUI_EFGDISPLAY_H
+#define GAMBIT_GUI_EFGDISPLAY_H
+
+#include <vector>
 
 #include "gamedoc.h"
 #include "efglayout.h"
 
-class gbtPayoffEditor : public wxTextCtrl {
-private:
-  gbtNodeEntry *m_entry;
-  Gambit::GameOutcome m_outcome;
-  int m_player;
+namespace Gambit::GUI {
 
-  /// @name Event handlers
-  //@{
-  void OnChar(wxKeyEvent &);
-  //@}
+class OutcomeEditorPopup;
+class AppendMovePopup;
+class NodeInfoPopup;
 
-public:
-  gbtPayoffEditor(wxWindow *p_parent);
+// Number of IDs reserved (starting at each of GBT_MENU_EDIT_NEW_MOVE_BASE and
+// GBT_MENU_EDIT_REASSIGN_PLAYER_BASE) for their respective node-context-menu submenus, one per
+// player (plus chance, for the former).
+constexpr int gbtPlayerMenuCount = 64;
 
-  void BeginEdit(gbtNodeEntry *p_node, int p_player);
-  void EndEdit(void);
-
-  bool IsEditing(void) const { return IsShown(); }
-
-  gbtNodeEntry *GetNodeEntry(void) const { return m_entry; }
-  Gambit::GameOutcome GetOutcome(void) const { return m_outcome; }
-  int GetPlayer(void) const { return m_player; }
- 
-  DECLARE_EVENT_TABLE()
-};
-
-class gbtEfgDisplay : public wxScrolledWindow, public gbtGameView {
-private:
-  gbtTreeLayout m_layout;
+class EfgDisplay final : public wxScrolledWindow, public GameView {
+  TreeLayout m_layout;
   int m_zoom;
-  wxMenu *m_nodeMenu;
-  gbtPayoffEditor *m_payoffEditor;
+  wxMenu *m_nodeMenu{nullptr};
+  // The node the right-click (or double-click) node menu was last shown for -- the target
+  // of whichever of that menu's commands the user picks. Purely local to the tree display;
+  // there is no persistent "selected node" elsewhere (see UpdateNodeMenu()).
+  GameNode m_contextNode;
+  // "Append move for"/"Insert move for" -- creates a fresh move for the chosen player. Always
+  // present regardless of node type; see UpdateNewMoveMenu.
+  wxMenu *m_newMoveMenu{nullptr};
+  wxMenuItem *m_newMoveItem{nullptr};
+  std::vector<GamePlayer> m_newMoveList;
+  // "Assign this move to" -- reassigns m_contextNode's *existing* move to a different player.
+  // Only meaningful at a non-terminal, non-chance node; see UpdateReassignPlayerMenu.
+  wxMenu *m_reassignPlayerMenu{nullptr};
+  wxMenuItem *m_reassignPlayerItem{nullptr};
+  std::vector<GamePlayer> m_reassignPlayerList;
+  OutcomeEditorPopup *m_outcomeEditor{nullptr};
+  AppendMovePopup *m_appendMoveEditor{nullptr};
+  NodeInfoPopup *m_nodeInfoPopup{nullptr};
+  wxTimer m_hoverTimer;
+  GameNode m_hoverNode;
+  bool m_pendingInitialZoom{true};
 
-  // Private Functions
-  void MakeMenus(void);
-  void AdjustScrollbarSteps(void);
+  // Set for the duration of a node move/copy drag (see OnMouseMotion) to the node being
+  // dragged; used only for live drag-over feedback, not for the drop itself.
+  GameNode m_draggedNode;
+  // Likewise, set for the duration of an outcome drag to the node whose outcome is being
+  // dragged. At most one of m_draggedNode/m_draggedOutcomeNode is set at a time.
+  GameNode m_draggedOutcomeNode;
+  // The node currently under the cursor during either kind of drag, and whether dropping
+  // there is possible, for DrawDragOverHighlight()'s use; null/false when nothing is being
+  // dragged.
+  GameNode m_dragOverNode;
+  bool m_dragOverValid{false};
+
+  // Constructs m_outcomeEditor/m_appendMoveEditor/m_nodeInfoPopup (efgtooltip.cc) and installs
+  // the tree drop target (efgdragdrop.cc), respectively. Called from the constructor body --
+  // rather than its initializer list -- since OutcomeEditorPopup/AppendMovePopup/NodeInfoPopup/
+  // TreeDropTarget are only forward-declared here; InitPopups() must run before OnUpdate(),
+  // which dereferences m_nodeInfoPopup via DismissNodeInfo().
+  void InitPopups();
+  void InitDropTarget();
+
+  void MakeMenus();
+  // Points m_nodeMenu at p_node (see m_contextNode) and refreshes which of its items are
+  // enabled accordingly. Called right before the menu is popped up, since nothing else
+  // keeps it live anymore.
+  void UpdateNodeMenu(const GameNode &p_node);
+  void UpdateNewMoveMenu();
+  void UpdateReassignPlayerMenu();
+  void AdjustScrollbarSteps();
+  // Clears the hovered-node tracking and hides the node info popup, if shown.
+  void DismissNodeInfo();
+  // Forwards to m_outcomeEditor->BeginEdit(); lets OnLeftDoubleClick (efgnodemenu.cc) start
+  // an outcome edit without needing OutcomeEditorPopup's complete type.
+  void BeginEditOutcome(const GameNode &p_node, int p_initialPlayer = 0);
+  // Forwards to m_appendMoveEditor->BeginAppend()/BeginInsert(); let OnNewMoveMenu
+  // (efgnodemenu.cc) start an append/insert-move edit without needing AppendMovePopup's
+  // complete type.
+  void BeginAppendMove(const GameNode &p_node, const GamePlayer &p_player);
+  void BeginInsertMove(const GameNode &p_node, const GamePlayer &p_player);
+  void DrawDragOverHighlight(wxDC &p_dc);
 
   /// @name Event handlers
   //@{
+  void OnSize(wxSizeEvent &);
   void OnMouseMotion(wxMouseEvent &);
+  void OnLeaveWindow(wxMouseEvent &);
   void OnLeftClick(wxMouseEvent &);
   void OnRightClick(wxMouseEvent &);
   void OnLeftDoubleClick(wxMouseEvent &);
-  void OnKeyEvent(wxKeyEvent &);
-  /// Payoff editor changes accepted with enter
-  void OnAcceptPayoffEdit(wxCommandEvent &);
+  void OnMagnify(wxMouseEvent &);
+  void OnNewMoveMenu(wxCommandEvent &);
+  void OnReassignPlayerMenu(wxCommandEvent &);
+  void OnHoverTimer(wxTimerEvent &);
+
+  // Node menu command handlers -- operate on m_contextNode (the node the menu was shown
+  // for), formerly on GameDocument's now-removed persistent selection.
+  void OnEditDeleteTree(wxCommandEvent &);
+  void OnEditDeleteParent(wxCommandEvent &);
+  void OnEditRemoveOutcome(wxCommandEvent &);
+  void OnEditReveal(wxCommandEvent &);
+  void OnEditNode(wxCommandEvent &);
+  void OnEditMove(wxCommandEvent &);
   //@}
 
-    
-  /// @name Overriding gbtGameView members
+  /// @name Overriding GameView members
   //@{
-  void OnUpdate(void);
-  void PostPendingChanges(void);
+  void OnUpdate() override;
+  void PostPendingChanges() override;
   //@}
 
-  void RefreshTree(void);
-  
+  void RefreshTree();
+
+  /// @brief Scroll the viewport such that the node is at the specified fraction of the viewport
+  void FocusNode(const GameNode &p_node, double p_xFrac = 0.5, double p_yFrac = 0.5);
+
+  void ZoomByFactor(double p_factor, const wxPoint &p_clientPoint);
+
 public:
-  gbtEfgDisplay(wxWindow *p_parent, gbtGameDocument *p_doc);
-    
-  virtual void OnDraw(wxDC &dc);
+  EfgDisplay(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc);
+
+  void OnDraw(wxDC &dc) override;
   void OnDraw(wxDC &, double);
 
-  int GetZoom(void) const { return m_zoom; }
+  int GetZoom() const { return m_zoom; }
   void SetZoom(int p_zoom);
-  void FitZoom(void);
-  
-  const gbtTreeLayout &GetLayout(void) const { return m_layout; }
+  void FitZoom();
 
-  void EnsureNodeVisible(Gambit::GameNode);
+  double GetScale() const { return 0.01 * m_zoom; }
+  int LayoutToDevice(int p_value) const { return static_cast<int>(p_value * GetScale()); }
+  int DeviceToLayout(int p_value) const
+  {
+    return static_cast<int>(static_cast<double>(p_value) / GetScale());
+  }
+
+  const TreeLayout &GetLayout() const { return m_layout; }
+
+  bool ShowTreeDropMenu(const GameNode &p_targetNode, const GameNode &p_sourceNode,
+                        const wxPoint &p_pos);
+  bool ShowOutcomeDropMenu(const GameNode &p_targetNode, const GameNode &p_sourceNode,
+                           const wxPoint &p_pos);
+
+  // Whether dropping a moved/copied subtree rooted at p_source onto p_target is possible
+  // (some action would be offered); used both to gate ShowTreeDropMenu's contents and to
+  // give live drag-over feedback while the drag is still in progress.
+  bool CanDropTreeOn(const GameNode &p_target, const GameNode &p_source) const;
+  // Whether dropping p_source's outcome onto p_target is possible; used both to gate
+  // ShowOutcomeDropMenu's contents and for live drag-over feedback.
+  bool CanDropOutcomeOn(const GameNode &p_target, const GameNode &p_source) const;
+  // The node being dragged, if a node (tree) move/copy drag is currently in progress;
+  // null otherwise (including during an outcome drag).
+  GameNode GetDraggedNode() const { return m_draggedNode; }
+  // The node whose outcome is being dragged, if an outcome drag is currently in progress;
+  // null otherwise (including during a node drag).
+  GameNode GetDraggedOutcomeNode() const { return m_draggedOutcomeNode; }
+  // Updates the live drag-over highlight (see m_dragOverNode) and repaints if it changed.
+  void SetDragOverNode(const GameNode &p_node, bool p_valid);
 
   DECLARE_EVENT_TABLE()
 };
+} // namespace Gambit::GUI
 
-#endif   // EFGDISPLAY_H
-
+#endif // GAMBIT_GUI_EFGDISPLAY_H

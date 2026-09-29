@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dlexcept.h
 // Declaration of internal exception error dialog.
@@ -24,20 +24,20 @@
 #define DLEXCEPT_H
 
 #include <wx/wx.h>
+#include <wx/richmsgdlg.h>
 
-//
-// A general-purpose dialog box to display the description of an internal
-// exception in Gambit.
-//
-class gbtExceptionDialog : public wxMessageDialog  {
+namespace Gambit::GUI {
+
+// A general-purpose dialog box to display the description of an internal exception.
+class ExceptionDialog final : public wxRichMessageDialog {
 public:
-  gbtExceptionDialog(wxWindow *p_parent, const std::string &p_message)
-    : wxMessageDialog(p_parent, 
-		      wxString(p_message.c_str(), *wxConvCurrent), 
-		      wxT("Internal exception in Gambit"),
-		      wxICON_ERROR | wxCANCEL) 
-    { }
+  ExceptionDialog(wxWindow *p_parent, const std::string &p_message)
+    : wxRichMessageDialog(p_parent, wxString(p_message.c_str(), *wxConvCurrent),
+                          wxT("Internal exception in Gambit"), wxOK | wxCENTRE | wxICON_ERROR)
+  {
+  }
 };
 
-#endif  // DLEXCEPT_H
+} // namespace Gambit::GUI
 
+#endif // DLEXCEPT_H

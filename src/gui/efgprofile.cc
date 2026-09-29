@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/efgprofile.cc
 // Extensive form behavior profile window
@@ -23,169 +23,219 @@
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
+#endif // WX_PRECOMP
 
+#include "games/gametree.h"
 #include "efgprofile.h"
-#include "menuconst.h"
-#include "renratio.h"        // for rational number rendering
 
+namespace Gambit::GUI {
 //-------------------------------------------------------------------------
-//              class gbtBehavProfileList: Member functions
+//              class BehaviorProfileList: Member functions
 //-------------------------------------------------------------------------
 
-gbtBehavProfileList::gbtBehavProfileList(wxWindow *p_parent, 
-					 gbtGameDocument *p_doc)
-  : wxSheet(p_parent, wxID_ANY), gbtGameView(p_doc)
+MixedBehaviorProfileList::MixedBehaviorProfileList(wxWindow *p_parent,
+                                                   const std::shared_ptr<GameDocument> &p_doc)
+  : wxGrid(p_parent, wxID_ANY), GameView(p_doc)
 {
   CreateGrid(0, 0);
-  SetRowLabelWidth(40);
-  SetColLabelHeight(25);
 
-  Connect(GetId(), wxEVT_SHEET_LABEL_LEFT_DOWN,
-	  (wxObjectEventFunction) (wxEventFunction) wxStaticCastEvent(wxSheetEventFunction, wxSheetEventFunction(&gbtBehavProfileList::OnLabelClick)));
+  // The table takes ownership of the provider
+  m_labels = new ProfileLabelProvider;
+  GetTable()->SetAttrProvider(m_labels);
 
-  Connect(GetId(), wxEVT_SHEET_CELL_LEFT_DOWN,
-	  (wxObjectEventFunction) (wxEventFunction) wxStaticCastEvent(wxSheetEventFunction, wxSheetEventFunction(&gbtBehavProfileList::OnCellClick)));
+  SetRowLabelSize(40);
+  SetColLabelSize(25);
+  SetCornerLabelValue(wxT("#"));
+
+  EnableEditing(false);
+  EnableDragGridSize(false);
+  EnableDragRowSize(false);
+  EnableDragColSize(false);
+
+  SetCellHighlightPenWidth(0);
+  SetCellHighlightROPenWidth(0);
+
+#if wxCHECK_VERSION(3, 3, 0)
+  // Suppress wxGrid's own label highlighting, which follows the grid cursor.
+  // The cursor is meaningless here, and cannot be moved out of the way, as
+  // wxGrid puts it back on the first cell whenever the grid is repainted;
+  // the labels worth highlighting are chosen in OnUpdate() instead.
+  // Versions before 3.3 do not highlight labels, so there is nothing to do.
+  DisableOverlaySelection();
+#endif
+
+  // The column and corner labels sort the list, so show them as clickable
+  GetGridColLabelWindow()->SetCursor(wxCursor(wxCURSOR_HAND));
+  GetGridCornerLabelWindow()->SetCursor(wxCursor(wxCURSOR_HAND));
+
+  GetGridColLabelWindow()->SetToolTip(_("Click an action to sort the profiles by its probability; "
+                                        "click it again to reverse the order"));
+  GetGridCornerLabelWindow()->SetToolTip(
+      _("Click to list the profiles in the order in which they were computed"));
+
+  Bind(wxEVT_GRID_LABEL_LEFT_CLICK, &MixedBehaviorProfileList::OnLabelClick, this);
+  Bind(wxEVT_GRID_CELL_LEFT_CLICK, &MixedBehaviorProfileList::OnCellClick, this);
+  Bind(wxEVT_GRID_SELECT_CELL, &MixedBehaviorProfileList::OnSelectCell, this);
 }
 
-gbtBehavProfileList::~gbtBehavProfileList()
-{ }
+MixedBehaviorProfileList::~MixedBehaviorProfileList() = default;
 
-void gbtBehavProfileList::OnLabelClick(wxSheetEvent &p_event)
+void MixedBehaviorProfileList::OnLabelClick(wxGridEvent &p_event)
 {
-  if (p_event.GetCol() == -1) {
-    m_doc->SetCurrentProfile(p_event.GetRow() + 1);
+  if (p_event.GetCol() == -1 && p_event.GetRow() == -1) {
+    // The corner label: restore the order in which the profiles were computed
+    p_event.Veto();
+    m_sortOrder.Reset();
+    OnUpdate();
   }
-  else {
-    // Clicking on an action column sets the selected node to the first
-    // member of that information set.
-    Gambit::GameAction action = m_doc->GetGame()->GetAction(p_event.GetCol()+1);
-    m_doc->SetSelectNode(action->GetInfoset()->GetMember(1));
+  else if (p_event.GetCol() == -1) {
+    m_doc->DoSelectProfile(m_sortOrder.GetProfile(p_event.GetRow()));
+  }
+  else if (p_event.GetRow() == -1) {
+    // An action: sort the profiles on the probability it is played with
+    p_event.Veto();
+    m_sortOrder.ToggleColumn(p_event.GetCol() + 1);
+    OnUpdate();
+  }
+
+  ClearSelection();
+}
+
+void MixedBehaviorProfileList::OnCellClick(wxGridEvent &p_event)
+{
+  m_doc->DoSelectProfile(m_sortOrder.GetProfile(p_event.GetRow()));
+  ClearSelection();
+}
+
+void MixedBehaviorProfileList::OnSelectCell(wxGridEvent &p_event)
+{
+  p_event.Veto();
+  ClearSelection();
+}
+
+static wxColour GetPlayerColor(const std::shared_ptr<GameDocument> &p_doc, int p_index)
+{
+  const GameAction action = p_doc->GetAction(p_index + 1);
+  return p_doc->GetStyle().GetPlayerColor(action->GetInfoset()->GetPlayer());
+}
+
+void MixedBehaviorProfileList::ResizeGrid(int p_rows, int p_cols)
+{
+  if (GetNumberRows() > p_rows) {
+    DeleteRows(p_rows, GetNumberRows() - p_rows);
+  }
+  else if (GetNumberRows() < p_rows) {
+    AppendRows(p_rows - GetNumberRows());
+  }
+
+  if (GetNumberCols() > p_cols) {
+    DeleteCols(p_cols, GetNumberCols() - p_cols);
+  }
+  else if (GetNumberCols() < p_cols) {
+    AppendCols(p_cols - GetNumberCols());
   }
 }
 
-void gbtBehavProfileList::OnCellClick(wxSheetEvent &p_event)
+void MixedBehaviorProfileList::UpdateLabels()
 {
-  m_doc->SetCurrentProfile(p_event.GetRow() + 1);
-}
-
-wxString gbtBehavProfileList::GetCellValue(const wxSheetCoords &p_coords)
-{
-  if (IsRowLabelCell(p_coords)) {
-    return wxString::Format(wxT("%d"), p_coords.GetRow() + 1);
-  }
-  else if (IsColLabelCell(p_coords)) {
-    Gambit::GameAction action = m_doc->GetGame()->GetAction(p_coords.GetCol()+1);
-    return (wxString::Format(wxT("%d: "), 
-			     action->GetInfoset()->GetNumber()) +
-	    wxString(action->GetLabel().c_str(), *wxConvCurrent));
-  }
-  else if (IsCornerLabelCell(p_coords)) {
-    return wxT("#");
+  // Row labels identify the profile itself, so that a profile keeps its
+  // number however the list happens to be sorted.
+  for (int row = 0; row < GetNumberRows(); ++row) {
+    wxString label;
+    label << m_sortOrder.GetProfile(row);
+    SetRowLabelValue(row, label);
   }
 
+  for (int col = 0; col < GetNumberCols(); ++col) {
+    const GameAction action = m_doc->GetAction(col + 1);
 
-  return wxString(m_doc->GetProfiles().GetActionProb(p_coords.GetCol()+1,
-						     p_coords.GetRow()+1).c_str(),
-		  *wxConvCurrent);
+    wxString label;
+    label << action->GetInfoset()->GetNumber() << ": " << action->GetLabel()
+          << wxString::FromUTF8(m_sortOrder.GetColumnMarker(col + 1));
+    SetColLabelValue(col, label);
+  }
 }
 
-static wxColour GetPlayerColor(gbtGameDocument *p_doc, int p_index)
+void MixedBehaviorProfileList::UpdateCells()
 {
-  Gambit::GameAction action = p_doc->GetGame()->GetAction(p_index+1);
-  return p_doc->GetStyle().GetPlayerColor(action->GetInfoset()->GetPlayer()->GetNumber());
-}
+  const int currentProfile = m_doc->GetWorkspace().GetCurrentProfile();
 
-wxSheetCellAttr gbtBehavProfileList::GetAttr(const wxSheetCoords &p_coords, 
-					     wxSheetAttr_Type) const
-{
-  int currentProfile = m_doc->GetCurrentProfile();
+  const wxFont normalFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
+  const wxFont boldFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD);
 
-  if (IsRowLabelCell(p_coords)) {
-    wxSheetCellAttr attr(GetSheetRefData()->m_defaultRowLabelAttr);
-    if (p_coords.GetRow()+1 == currentProfile) {
-      attr.SetFont(wxFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
+  for (int row = 0; row < GetNumberRows(); ++row) {
+    const int profile = m_sortOrder.GetProfile(row);
+
+    for (int col = 0; col < GetNumberCols(); ++col) {
+      SetCellValue(
+          row, col,
+          wxString(m_doc->GetWorkspace().GetProfiles().GetActionProb(col + 1, profile).c_str(),
+                   *wxConvCurrent));
+
+      wxGridCellAttr *attr = new wxGridCellAttr;
+      attr->SetFont(profile == currentProfile ? boldFont : normalFont);
+      attr->SetAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
+      attr->SetReadOnly(true);
+
+      try {
+        const GameAction action = m_doc->GetAction(col + 1);
+        attr->SetTextColour(m_doc->GetStyle().GetPlayerColor(action->GetInfoset()->GetPlayer()));
+
+        if (action->GetInfoset()->GetNumber() % 2 == 0) {
+          attr->SetBackgroundColour(wxColour(250, 250, 250));
+        }
+        else {
+          attr->SetBackgroundColour(wxColour(225, 225, 225));
+        }
+      }
+      catch (std::out_of_range &) {
+        // If GetAction() throws this, just handle it silently; can occur
+        // when solving a trivial game via the strategic form
+      }
+
+      SetAttr(row, col, attr);
     }
-    else {
-      attr.SetFont(wxFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
-    }
-    attr.SetAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-    attr.SetOrientation(wxHORIZONTAL);
-    attr.SetReadOnly(true);
-    return attr;
   }
-  else if (IsColLabelCell(p_coords)) {
-    wxSheetCellAttr attr(GetSheetRefData()->m_defaultColLabelAttr);
-    attr.SetFont(wxFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
-    attr.SetAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-    attr.SetOrientation(wxHORIZONTAL);
-    attr.SetReadOnly(true);
-    if (p_coords.GetRow() > 0) {
-      attr.SetForegroundColour(GetPlayerColor(m_doc, p_coords.GetCol()));
-    }
-    return attr;
-  }
-  else if (IsCornerLabelCell(p_coords)) {
-    return GetSheetRefData()->m_defaultCornerLabelAttr;
-  }
-
-  wxSheetCellAttr attr(GetSheetRefData()->m_defaultGridCellAttr);
-  if (p_coords.GetRow()+1 == currentProfile) {
-    attr.SetFont(wxFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
-  }
-  else {
-    attr.SetFont(wxFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
-  }
-  attr.SetAlignment(wxALIGN_CENTER, wxALIGN_CENTER);
-  attr.SetOrientation(wxHORIZONTAL);
-  attr.SetRenderer(wxSheetCellRenderer(new gbtRationalRendererRefData()));
-
-  try {
-    Gambit::GameAction action = m_doc->GetGame()->GetAction(p_coords.GetCol()+1);
-    attr.SetForegroundColour(m_doc->GetStyle().GetPlayerColor(action->GetInfoset()->GetPlayer()->GetNumber()));
-    if (action->GetInfoset()->GetNumber() % 2 == 0) {
-      attr.SetBackgroundColour(wxColour(250, 250, 250));
-    }
-    else {
-      attr.SetBackgroundColour(wxColour(225, 225, 225));
-    }
-  }
-  catch (Gambit::IndexException) {
-    // If GetAction() throws this, just handle it silently; can occur
-    // when solving a trivial game via the strategic form
-  }
-  attr.SetReadOnly(true);
-  return attr;
 }
 
-void gbtBehavProfileList::OnUpdate(void)
+void MixedBehaviorProfileList::UpdateHighlights()
 {
-  if (!m_doc->GetGame() || m_doc->NumProfileLists() == 0) {
-    DeleteRows(0, GetNumberRows());
+  // GetColumn() numbers columns from one, and is zero when unsorted
+  m_labels->SetSortedColumn(m_sortOrder.GetColumn() - 1);
+  m_labels->SetSelectedRow(m_sortOrder.GetRow(m_doc->GetWorkspace().GetCurrentProfile()));
+}
+
+void MixedBehaviorProfileList::OnUpdate()
+{
+  if (!m_doc->GetGame() || m_doc->GetWorkspace().NumProfileLists() == 0) {
+    if (GetNumberRows() > 0) {
+      DeleteRows(0, GetNumberRows());
+    }
+    if (GetNumberCols() > 0) {
+      DeleteCols(0, GetNumberCols());
+    }
     return;
   }
 
-  const gbtAnalysisOutput &profiles = m_doc->GetProfiles();
-  int profileLength = m_doc->GetGame()->BehavProfileLength();
+  const AnalysisOutput &profiles = m_doc->GetWorkspace().GetProfiles();
+  const int profileLength = m_doc->GetGame()->BehavProfileLength();
 
   BeginBatch();
-  if (GetNumberRows() > profiles.NumProfiles()) {
-    DeleteRows(0, GetNumberRows() - profiles.NumProfiles());
-  }
-  else if (GetNumberRows() < profiles.NumProfiles()) {
-    InsertRows(0, profiles.NumProfiles() - GetNumberRows());
-  }
 
-  if (GetNumberCols() > profileLength) {
-    DeleteCols(0, GetNumberCols() - profileLength);
-  }
-  else if (GetNumberCols() < profileLength) {
-    InsertCols(0, profileLength - GetNumberCols());
-  }
+  ResizeGrid(profiles.NumProfiles(), profileLength);
+  m_sortOrder.Rebuild(profiles.NumProfiles(), profileLength,
+                      [&](int p_col, int p_left, int p_right) {
+                        return profiles.CompareActionProb(p_col, p_left, p_right);
+                      });
+  UpdateHighlights();
+  UpdateLabels();
+  UpdateCells();
 
   AutoSizeRows();
-  AutoSizeCols();
+  AutoSizeColumns();
+
+  ClearSelection();
 
   EndBatch();
 }
-
+} // namespace Gambit::GUI

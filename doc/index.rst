@@ -1,60 +1,117 @@
-Welcome
-=======
+Gambit: User documentation
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Gambit** is a library of game theory software and tools for the
-construction and analysis of finite extensive and strategic games. 
-Gambit is fully-cross platform, and is supported on Linux, Mac OS X,
-and Microsoft Windows.
+construction and analysis of finite extensive and strategic games.
 
-Key features of Gambit include:
+- **Users:** We recommend most newcomers install the PyGambit Python package and read the associated documentation, which includes tutorials and a complete API reference.
+- **Contributors:** Please read the :ref:`code of conduct and contribution guidelines <contributing>` before posting on GitHub.
 
-* A :ref:`graphical user interface <section-gui>`, which uses
-  `wxWidgets <http://www.wxwidgets.org>`_ to provide a common
-  interface with native look-and-feel across platforms.
-* All equilibrium-computing algorithms are available as
-  :ref:`command-line tools <command-line>`, callable from scripts and
-  other programs.
-* A :ref:`Python API <python-api>` for developing scripting applications.
+.. grid::
 
+   .. grid-item-card:: ⬇️ Installing Gambit
+      :columns: 3
 
-Using and citing Gambit
-~~~~~~~~~~~~~~~~~~~~~~~
+      Quick installation with PyGambit:
+      ``pip install pygambit``
 
-Gambit is Free/Open Source software, released under the terms of the
-`GNU General Public License <http://www.gnu.org/copyleft/gpl.html‎>`_,
-Version 2.
+      .. button-ref:: install
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
 
-We hope you will find Gambit useful for both teaching and research
-applications. If you do use Gambit in a class, or in a paper, we would
-like to hear about it. We are especially interested in finding out
-what you like about Gambit, and where you think improvements could be
-made.
+   .. grid-item-card:: 🐍 PyGambit
+      :columns: 3
 
-If you are citing Gambit in a paper, we suggest a citation of the form:
+      Explore tutorial notebooks and API reference docs.
 
-  McKelvey, Richard D., McLennan, Andrew M., and 
-  `Turocy, Theodore L. <http://www.gambit-project.org/turocy>`__
-  (2014).
-  Gambit: Software Tools for Game Theory, Version 16.0.1.
-  http://www.gambit-project.org.
-
-Replace the version number and year as appropriate if you use a
-different release.
+      .. button-ref:: pygambit
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
 
 
-Table of Contents
-~~~~~~~~~~~~~~~~~
+   .. grid-item-card:: 🧮 Analysing games
+      :columns: 3
+
+      Compute equilibria and run econometric estimations.
+
+      .. button-ref:: algorithms
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
+
+   .. grid-item-card:: 📚 Catalog of games
+      :columns: 3
+
+      Browse a curated collection of games.
+
+      .. button-link:: https://gambit-catalog.readthedocs.io/
+         :click-parent:
+         :color: secondary
+         :expand:
+
+         Open catalog
+
+   .. grid-item-card:: 🖱️ Graphical interface
+      :columns: 3
+
+      Interactively create, explore, and find equilibria of games.
+
+      .. button-ref:: section-gui
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
+
+   .. grid-item-card:: 💻 Command-line interface
+      :columns: 3
+
+      Run equilibrium calculations from the command-line.
+
+      .. button-ref:: command-line
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
+
+   .. grid-item-card:: 🐛 Bugs and feature requests
+      :columns: 3
+
+      Report bugs and feature requests on GitHub.
+
+      .. button-ref:: github-issues
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
+
+   .. grid-item-card:: 📖 Developer docs
+      :columns: 3
+
+      Guides for developers & contributors to the package.
+
+      .. button-ref:: developer
+         :ref-type: ref
+         :click-parent:
+         :color: secondary
+         :expand:
+
 
 .. toctree::
+   :hidden:
    :maxdepth: 1
-  
-   intro
-   gui
+
+   install
+   algorithms
+   pygambit
    tools
-   pyapi
-   samples
-   ideas
-   build
+   gui
+   catalog_generators
+   developer
    formats
    biblio
 
@@ -63,7 +120,7 @@ Table of Contents
 
    contents
 
-Or, see a :ref:`more detailed table of contents <full-contents>`.
+.. Or, see a :ref:`more detailed table of contents <full-contents>`.
 
 .. Indices and tables
 .. ==================
@@ -71,4 +128,3 @@ Or, see a :ref:`more detailed table of contents <full-contents>`.
 .. * :ref:`genindex`
 .. * :ref:`modindex`
 .. * :ref:`search`
-

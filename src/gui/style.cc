@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/style.cc
 // Display configuration class for the extensive form
@@ -20,64 +20,70 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
+#include <map>
 #include <sstream>
 
-#include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
-#include <wx/config.h>
+#endif // WX_PRECOMP
 
+#include "games/gametree.h"
 #include "style.h"
+#include "gamedoc.h" // for AnalysisWorkspace's complete type -- only needed here, not in style.h
 
+namespace Gambit::GUI {
 //===========================================================================
-//                     class gbtStyle: Implementation
+//                 class TreeRenderConfig: Implementation
 //===========================================================================
 
-gbtStyle::gbtStyle(void)
+TreeRenderConfig::TreeRenderConfig()
   : m_font(wxFont(10, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD))
 {
   SetDefaults();
 }
 
 static wxColour s_defaultColors[8] = {
-  wxColour(255, 0, 0),
-  wxColour(0, 0, 255),
-  wxColour(0, 128, 0),
-  wxColour(255, 128, 0),
-  wxColour(0, 0, 64),
-  wxColour(128, 0, 255),
-  wxColour(64, 0, 0),
-  wxColour(255, 128, 255)
-};
+    wxColour(255, 0, 0), wxColour(0, 0, 255),   wxColour(0, 128, 0), wxColour(255, 128, 0),
+    wxColour(0, 0, 64),  wxColour(128, 0, 255), wxColour(64, 0, 0),  wxColour(255, 128, 255)};
 
 //!
 //! Gets the player color assigned to player number 'pl'.
 //! If this is the first request for that player's color, create the
 //! default one.
 //!
-const wxColour &gbtStyle::GetPlayerColor(int pl) const
+const wxColour &TreeRenderConfig::GetPlayerColor(const int pl) const
 {
-  while (pl > m_playerColors.Length()) {
-    m_playerColors.Append(s_defaultColors[m_playerColors.Length() % 8]);
+  while (pl > static_cast<int>(m_playerColors.size())) {
+    m_playerColors.push_back(s_defaultColors[m_playerColors.size() % 8]);
   }
-
   return m_playerColors[pl];
 }
 
-void gbtStyle::SetDefaults(void)
+const wxColour &TreeRenderConfig::GetPlayerColor(const GamePlayer &p_player) const
+{
+  if (!p_player) {
+    return m_terminalColor;
+  }
+  if (p_player->IsChance()) {
+    return m_chanceColor;
+  }
+  while (p_player->GetNumber() > static_cast<int>(m_playerColors.size())) {
+    m_playerColors.push_back(s_defaultColors[m_playerColors.size() % 8]);
+  }
+  return m_playerColors[p_player->GetNumber()];
+}
+
+void TreeRenderConfig::SetDefaults()
 {
   m_nodeSize = 10;
   m_terminalSpacing = 50;
   m_chanceToken = GBT_NODE_TOKEN_DOT;
   m_playerToken = GBT_NODE_TOKEN_DOT;
   m_terminalToken = GBT_NODE_TOKEN_DOT;
-  m_rootReachable = 0;
   m_branchLength = 60;
   m_tineLength = 20;
   m_branchStyle = GBT_BRANCH_STYLE_FORKTINE;
-  m_branchLabels = GBT_BRANCH_LABEL_HORIZONTAL;
-  m_infosetConnect = GBT_INFOSET_CONNECT_ALL;
+  m_branchLabels = GBT_BRANCH_LABEL_ORIENT_HORIZONTAL;
   m_infosetJoin = GBT_INFOSET_JOIN_CIRCLES;
   m_nodeAboveLabel = GBT_NODE_LABEL_LABEL;
   m_nodeBelowLabel = GBT_NODE_LABEL_ISETID;
@@ -89,259 +95,243 @@ void gbtStyle::SetDefaults(void)
 
   m_chanceColor = wxColour(154, 205, 50);
   m_terminalColor = *wxBLACK;
-  for (int pl = 1; pl <= m_playerColors.Length(); pl++) {
-    m_playerColors[pl] = s_defaultColors[(pl-1)%8];
+  for (size_t pl = 1; pl <= m_playerColors.size(); pl++) {
+    m_playerColors[pl] = s_defaultColors[(pl - 1) % 8];
   }
 }
 
-std::string gbtStyle::GetColorXML(void) const
+namespace {
+
+wxString EmptyLabel(const GameNode &, const AnalysisWorkspace &) { return {}; }
+
+wxString NodeLabelText(const GameNode &n, const AnalysisWorkspace &)
 {
-  std::ostringstream s;
-
-  s <<"<colors>\n";
-  s <<"<player id=\"-1\" ";
-  s <<"red=\"" << ((int) m_terminalColor.Red()) << "\" ";
-  s <<"green=\"" << ((int) m_terminalColor.Green()) << "\" ";
-  s <<"blue=\"" << ((int) m_terminalColor.Blue()) << "\" ";
-  s <<"/>\n";
-
-  s <<"<player id=\"0\" ";
-  s <<"red=\"" << ((int) m_chanceColor.Red()) << "\" ";
-  s <<"green=\"" << ((int) m_chanceColor.Green()) << "\" ";
-  s <<"blue=\"" << ((int) m_chanceColor.Blue()) << "\" ";
-  s <<"/>\n";
-
-  for (int pl = 1; pl <= m_playerColors.Length(); pl++) {
-    s <<"<player id=\"" << pl << "\" ";
-    s <<"red=\"" << ((int) m_playerColors[pl].Red()) << "\" ";
-    s <<"green=\"" << ((int) m_playerColors[pl].Green()) << "\" ";
-    s <<"blue=\"" << ((int) m_playerColors[pl].Blue()) << "\" "; 
-    s <<"/>\n";
-  }
-
-  s <<"</colors>\n";
-
-  return s.str();
+  return wxString::FromUTF8(n->GetLabel());
 }
 
-void gbtStyle::SetColorXML(TiXmlNode *p_colors)
+wxString PlayerLabel(const GameNode &n, const AnalysisWorkspace &)
 {
-  for (TiXmlNode *node = p_colors->FirstChild(); node;
-       node = node->NextSiblingElement()) {
-    int id = -2;
-    node->ToElement()->QueryIntAttribute("id", &id);
-
-    int red = 0, green = 0, blue = 0;
-    node->ToElement()->QueryIntAttribute("red", &red);
-    node->ToElement()->QueryIntAttribute("green", &green);
-    node->ToElement()->QueryIntAttribute("blue", &blue);
-    if (id > 0) {
-      // This call ensures that the player appears in the color table
-      GetPlayerColor(id);
-      SetPlayerColor(id, wxColour(red, green, blue));
-    }
-    else if (id == 0) {
-      SetChanceColor(wxColour(red, green, blue));
-    }
-    else if (id == -1) {
-      SetTerminalColor(wxColour(red, green, blue));
-    }
+  if (!n->GetPlayer()) {
+    return {};
   }
+  return wxString::FromUTF8(n->GetPlayer()->GetLabel());
 }
 
-std::string gbtStyle::GetFontXML(void) const
+wxString InfosetLabel(const GameNode &n, const AnalysisWorkspace &)
 {
-  std::ostringstream s;
-
-  s << "<font size=\"" << (int) m_font.GetPointSize() << "\" ";
-  s << "family=\"" << (int) m_font.GetFamily() << "\" ";
-  s << "face=\"" << (const char *) m_font.GetFaceName().mb_str() << "\" ";
-  s << "style=\"" << (int) m_font.GetStyle() << "\" ";
-  s << "weight=\"" << (int) m_font.GetWeight() << "\" ";
-  s << "/>\n";
-
-  return s.str();
+  if (!n->GetInfoset()) {
+    return {};
+  }
+  return wxString::FromUTF8(n->GetInfoset()->GetLabel());
 }
 
-void gbtStyle::SetFontXML(TiXmlNode *p_font)
+wxString InfosetIdLabel(const GameNode &n, const AnalysisWorkspace &)
 {
-  int size, family, style, weight;
-  p_font->ToElement()->QueryIntAttribute("size", &size);
-  p_font->ToElement()->QueryIntAttribute("family", &family);
-  p_font->ToElement()->QueryIntAttribute("style", &style);
-  p_font->ToElement()->QueryIntAttribute("weight", &weight);
-  // As wxWidgets 3.1 deprecates the integer-based family/style/weight
-  // parameters, at present we are not able to guarantee to keep these
-  // in the style
-  SetFont(wxFont(size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL, false,
-		 wxString(p_font->ToElement()->Attribute("face"),
-			  *wxConvCurrent)));
+  if (!n->GetInfoset()) {
+    return {};
+  }
+  wxString label;
+  if (n->GetInfoset()->IsChanceInfoset()) {
+    label << "C:" << n->GetInfoset()->GetNumber();
+  }
+  else {
+    label << n->GetPlayer()->GetNumber() << ":" << n->GetInfoset()->GetNumber();
+  }
+  return label;
 }
 
-std::string gbtStyle::GetLayoutXML(void) const
+wxString RealizProbLabel(const GameNode &n, const AnalysisWorkspace &p_workspace)
 {
-  std::ostringstream s;
-  s << "<autolayout>\n";
-
-  s << "<nodes size=\"" << m_nodeSize << "\" spacing=\"" << m_terminalSpacing << "\" ";
-  std::string nodeTokens[] = { "line", "box", "circle", "diamond", "dot" };
-  s << "chance=\"" << nodeTokens[m_chanceToken] << "\" ";
-  s << "player=\"" << nodeTokens[m_playerToken] << "\" ";
-  s << "terminal=\"" << nodeTokens[m_terminalToken] << "\"/>\n";
-
-  s << "<branches size=\"" << m_branchLength << "\" tine=\"" << m_tineLength << "\" ";
-  std::string branchStyles[] = { "line", "forktine" };
-  s << "branch=\"" << branchStyles[m_branchStyle] << "\" ";
-  std::string branchLabels[] = { "horizontal", "rotated" };
-  s << "labels=\"" << branchLabels[m_branchLabels] << "\"/>\n";
-  
-  std::string infosetConnect[] = { "none", "same", "all" };
-  s << "<infosets connect=\"" << infosetConnect[m_infosetConnect] << "\" ";
-  std::string infosetStyle[] = { "lines", "circles" };
-  s << "style=\"" << infosetStyle[m_infosetJoin] << "\"/>\n";
-  
-  s << "</autolayout>\n";
-  return s.str();
+  return wxString::FromUTF8(p_workspace.GetProfiles().GetRealizProb(n));
 }
 
-void gbtStyle::SetLayoutXML(TiXmlNode *p_node)
+wxString BeliefProbLabel(const GameNode &n, const AnalysisWorkspace &p_workspace)
 {
-  TiXmlNode *nodes = p_node->FirstChild("nodes");
-  if (nodes) {
-    nodes->ToElement()->QueryIntAttribute("size", &m_nodeSize);
-    nodes->ToElement()->QueryIntAttribute("spacing", &m_terminalSpacing);
-    const char *chance = nodes->ToElement()->Attribute("chance");
-    if (chance) {
-      std::string s = chance;
-      if (s == "line")           m_chanceToken = GBT_NODE_TOKEN_LINE;
-      else if (s == "box")       m_chanceToken = GBT_NODE_TOKEN_BOX;
-      else if (s == "circle")    m_chanceToken = GBT_NODE_TOKEN_CIRCLE;
-      else if (s == "diamond")   m_chanceToken = GBT_NODE_TOKEN_DIAMOND;
-      else if (s == "dot")       m_chanceToken = GBT_NODE_TOKEN_DOT;
-    }
-
-    const char *player = nodes->ToElement()->Attribute("player");
-    if (player) {
-      std::string s = player;
-      if (s == "line")           m_playerToken = GBT_NODE_TOKEN_LINE;
-      else if (s == "box")       m_playerToken = GBT_NODE_TOKEN_BOX;
-      else if (s == "circle")    m_playerToken = GBT_NODE_TOKEN_CIRCLE;
-      else if (s == "diamond")   m_playerToken = GBT_NODE_TOKEN_DIAMOND;
-      else if (s == "dot")       m_playerToken = GBT_NODE_TOKEN_DOT;
-    }
-
-    const char *terminal = nodes->ToElement()->Attribute("terminal");
-    if (terminal) {
-      std::string s = terminal;
-      if (s == "line")           m_terminalToken = GBT_NODE_TOKEN_LINE;
-      else if (s == "box")       m_terminalToken = GBT_NODE_TOKEN_BOX;
-      else if (s == "circle")    m_terminalToken = GBT_NODE_TOKEN_CIRCLE;
-      else if (s == "diamond")   m_terminalToken = GBT_NODE_TOKEN_DIAMOND;
-      else if (s == "dot")       m_terminalToken = GBT_NODE_TOKEN_DOT;
-    }
-  }
-
-  TiXmlNode *branches = p_node->FirstChild("branches");
-  if (branches) {
-    branches->ToElement()->QueryIntAttribute("size", &m_branchLength);
-    branches->ToElement()->QueryIntAttribute("tine", &m_tineLength);
-
-    const char *branch = branches->ToElement()->Attribute("branch");
-    if (branch) {
-      std::string s = branch;
-      if (s == "line")           m_branchStyle = GBT_BRANCH_STYLE_LINE;
-      else if (s == "forktine")  m_branchStyle = GBT_BRANCH_STYLE_FORKTINE;
-    }
-   
-    const char *labels = branches->ToElement()->Attribute("labels");
-    if (labels) {
-      std::string s = labels;
-      if (s == "horizontal")     m_branchLabels = GBT_BRANCH_LABEL_HORIZONTAL;
-      else if (s == "rotated")   m_branchLabels = GBT_BRANCH_LABEL_ROTATED;
-    }
-  }
-
-  TiXmlNode *infosets = p_node->FirstChild("infosets");
-  if (infosets) {
-    const char *connect = infosets->ToElement()->Attribute("connect");
-    if (connect) {
-      std::string s = connect;
-      if (s == "none")      m_infosetConnect = GBT_INFOSET_CONNECT_NONE;
-      else if (s == "same") m_infosetConnect = GBT_INFOSET_CONNECT_SAMELEVEL;
-      else if (s == "all")  m_infosetConnect = GBT_INFOSET_CONNECT_ALL;
-    }
-
-    const char *style = infosets->ToElement()->Attribute("style");
-    if (style) {
-      std::string s = style;
-      if (s == "lines")         m_infosetJoin = GBT_INFOSET_JOIN_LINES;
-      else if (s == "circles")  m_infosetJoin = GBT_INFOSET_JOIN_CIRCLES;
-    }
-  }
+  return wxString::FromUTF8(p_workspace.GetProfiles().GetBeliefProb(n));
 }
 
-std::string gbtStyle::GetLabelXML(void) const
+wxString NodeValueLabel(const GameNode &n, const AnalysisWorkspace &p_workspace)
 {
-  std::ostringstream s;
-  s << "<labels ";
-  std::string nodeLabels[] = { "none", "label", "player",
-			       "isetlabel", "isetid",
-			       "realizprob", "beliefprob", "value" };
-  s << "abovenode=\"" << nodeLabels[m_nodeAboveLabel] << "\" ";
-  s << "belownode=\"" << nodeLabels[m_nodeBelowLabel] << "\" ";
-
-  std::string branchLabels[] = { "none", "label", "probs", "value" };
-  s << "abovebranch=\"" << branchLabels[m_branchAboveLabel] << "\" ";
-  s << "belowbranch=\"" << branchLabels[m_branchBelowLabel] << "\" ";
-
-  s << "/>\n";
-  return s.str();
+  if (!n->GetInfoset() || n->GetPlayer()->GetNumber() <= 0) {
+    return {};
+  }
+  return {p_workspace.GetProfiles().GetNodeValue(n, n->GetPlayer()->GetNumber()).c_str(),
+          *wxConvCurrent};
 }
 
-void gbtStyle::SetLabelXML(TiXmlNode *p_node)
+using NodeLabelFunction = wxString (*)(const GameNode &, const AnalysisWorkspace &);
+
+const std::map<NodeLabelStyle, NodeLabelFunction> s_nodeLabelFunctions = {
+    {GBT_NODE_LABEL_NOTHING, &EmptyLabel},         {GBT_NODE_LABEL_LABEL, &NodeLabelText},
+    {GBT_NODE_LABEL_PLAYER, &PlayerLabel},         {GBT_NODE_LABEL_ISETLABEL, &InfosetLabel},
+    {GBT_NODE_LABEL_ISETID, &InfosetIdLabel},      {GBT_NODE_LABEL_REALIZPROB, &RealizProbLabel},
+    {GBT_NODE_LABEL_BELIEFPROB, &BeliefProbLabel}, {GBT_NODE_LABEL_VALUE, &NodeValueLabel},
+};
+
+wxString BranchLabelText(const GameNode &n, const AnalysisWorkspace &)
 {
-  const char *abovenode = p_node->ToElement()->Attribute("abovenode");
-  if (abovenode) {
-    std::string s = abovenode;
-    if (s == "none")             m_nodeAboveLabel = GBT_NODE_LABEL_NOTHING;
-    else if (s == "label")       m_nodeAboveLabel = GBT_NODE_LABEL_LABEL;
-    else if (s == "player")      m_nodeAboveLabel = GBT_NODE_LABEL_PLAYER;
-    else if (s == "isetlabel")   m_nodeAboveLabel = GBT_NODE_LABEL_ISETLABEL;
-    else if (s == "isetid")      m_nodeAboveLabel = GBT_NODE_LABEL_ISETID;
-    else if (s == "realizprob")  m_nodeAboveLabel = GBT_NODE_LABEL_REALIZPROB;
-    else if (s == "beliefprob")  m_nodeAboveLabel = GBT_NODE_LABEL_BELIEFPROB;
-    else if (s == "value")       m_nodeAboveLabel = GBT_NODE_LABEL_VALUE;
-  }
-
-  const char *belownode = p_node->ToElement()->Attribute("belownode");
-  if (belownode) {
-    std::string s = belownode;
-    if (s == "none")             m_nodeBelowLabel = GBT_NODE_LABEL_NOTHING;
-    else if (s == "label")       m_nodeBelowLabel = GBT_NODE_LABEL_LABEL;
-    else if (s == "player")      m_nodeBelowLabel = GBT_NODE_LABEL_PLAYER;
-    else if (s == "isetlabel")   m_nodeBelowLabel = GBT_NODE_LABEL_ISETLABEL;
-    else if (s == "isetid")      m_nodeBelowLabel = GBT_NODE_LABEL_ISETID;
-    else if (s == "realizprob")  m_nodeBelowLabel = GBT_NODE_LABEL_REALIZPROB;
-    else if (s == "beliefprob")  m_nodeBelowLabel = GBT_NODE_LABEL_BELIEFPROB;
-    else if (s == "value")       m_nodeBelowLabel = GBT_NODE_LABEL_VALUE;
-  }
-
-  const char *abovebranch = p_node->ToElement()->Attribute("abovebranch");
-  if (abovebranch) {
-    std::string s = abovebranch;
-    if (s == "none")             m_branchAboveLabel = GBT_BRANCH_LABEL_NOTHING;
-    else if (s == "label")       m_branchAboveLabel = GBT_BRANCH_LABEL_LABEL;
-    else if (s == "probs")       m_branchAboveLabel = GBT_BRANCH_LABEL_PROBS;
-    else if (s == "value")       m_branchAboveLabel = GBT_BRANCH_LABEL_VALUE;
-  }
-
-  const char *belowbranch = p_node->ToElement()->Attribute("belowbranch");
-  if (belowbranch) {
-    std::string s = belowbranch;
-    if (s == "none")             m_branchBelowLabel = GBT_BRANCH_LABEL_NOTHING;
-    else if (s == "label")       m_branchBelowLabel = GBT_BRANCH_LABEL_LABEL;
-    else if (s == "probs")       m_branchBelowLabel = GBT_BRANCH_LABEL_PROBS;
-    else if (s == "value")       m_branchBelowLabel = GBT_BRANCH_LABEL_VALUE;
-  }
-
+  const GameNode parent = n->GetParent();
+  const int childNumber = n->GetPriorAction()->GetNumber();
+  return wxString::FromUTF8(parent->GetInfoset()->GetAction(childNumber)->GetLabel());
 }
+
+wxString BranchProbLabel(const GameNode &n, const AnalysisWorkspace &p_workspace)
+{
+  const GameNode parent = n->GetParent();
+  const int childNumber = n->GetPriorAction()->GetNumber();
+  if (parent->GetPlayer() && parent->GetPlayer()->IsChance()) {
+    return {static_cast<std::string>(
+                parent->GetInfoset()->GetActionProb(parent->GetInfoset()->GetAction(childNumber)))
+                .c_str(),
+            *wxConvCurrent};
+  }
+  if (p_workspace.NumProfileLists() == 0) {
+    return {};
+  }
+  return wxString::FromUTF8(p_workspace.GetProfiles().GetActionProb(parent, childNumber));
+}
+
+wxString BranchValueLabel(const GameNode &n, const AnalysisWorkspace &p_workspace)
+{
+  if (p_workspace.NumProfileLists() == 0) {
+    return {};
+  }
+  const GameNode parent = n->GetParent();
+  const int childNumber = n->GetPriorAction()->GetNumber();
+  return wxString::FromUTF8(p_workspace.GetProfiles().GetActionValue(parent, childNumber));
+}
+
+using BranchLabelFunction = wxString (*)(const GameNode &, const AnalysisWorkspace &);
+
+const std::map<BranchLabelStyle, BranchLabelFunction> s_branchLabelFunctions = {
+    {GBT_BRANCH_LABEL_NOTHING, &EmptyLabel},
+    {GBT_BRANCH_LABEL_LABEL, &BranchLabelText},
+    {GBT_BRANCH_LABEL_PROBS, &BranchProbLabel},
+    {GBT_BRANCH_LABEL_VALUE, &BranchValueLabel},
+};
+
+} // namespace
+
+LabelGenerator TreeRenderConfig::GetNodeLabelGenerator(NodeLabelStyle p_which,
+                                                       const AnalysisWorkspace &p_workspace) const
+{
+  const auto iter = s_nodeLabelFunctions.find(p_which);
+  const NodeLabelFunction fn = (iter != s_nodeLabelFunctions.end()) ? iter->second : &EmptyLabel;
+  return [fn, &p_workspace](const GameNode &n) { return fn(n, p_workspace); };
+}
+
+LabelGenerator
+TreeRenderConfig::GetBranchLabelGenerator(BranchLabelStyle p_which,
+                                          const AnalysisWorkspace &p_workspace) const
+{
+  const auto iter = s_branchLabelFunctions.find(p_which);
+  const BranchLabelFunction fn =
+      (iter != s_branchLabelFunctions.end()) ? iter->second : &EmptyLabel;
+  return [fn, &p_workspace](const GameNode &n) { return fn(n, p_workspace); };
+}
+
+void TreeRenderConfig::Save(LegacyWorkspaceFile &p_workspace) const
+{
+  const auto color = [](int player, const wxColour &value) {
+    return LegacyWorkspaceFile::Color{player, value.Red(), value.Green(), value.Blue()};
+  };
+  p_workspace.colors = {color(-1, m_terminalColor), color(0, m_chanceColor)};
+  for (size_t player = 1; player <= m_playerColors.size(); ++player) {
+    p_workspace.colors.push_back(color(player, m_playerColors[player]));
+  }
+
+  p_workspace.font = LegacyWorkspaceFile::Font{
+      m_font.GetPointSize(), static_cast<int>(m_font.GetFamily()),
+      m_font.GetFaceName().ToStdString(), static_cast<int>(m_font.GetStyle()),
+      static_cast<int>(m_font.GetWeight())};
+  static const std::string node_tokens[] = {"line", "box", "circle", "diamond", "dot"};
+  static const std::string branch_styles[] = {"line", "forktine"};
+  static const std::string branch_labels[] = {"horizontal", "rotated"};
+  static const std::string infoset_styles[] = {"lines", "circles"};
+  p_workspace.layout = LegacyWorkspaceFile::Layout{m_nodeSize,
+                                                   m_terminalSpacing,
+                                                   node_tokens[m_chanceToken],
+                                                   node_tokens[m_playerToken],
+                                                   node_tokens[m_terminalToken],
+                                                   m_branchLength,
+                                                   m_tineLength,
+                                                   branch_styles[m_branchStyle],
+                                                   branch_labels[m_branchLabels],
+                                                   infoset_styles[m_infosetJoin]};
+
+  static const std::string node_labels[] = {"none",   "label",      "player",     "isetlabel",
+                                            "isetid", "realizprob", "beliefprob", "value"};
+  static const std::string edge_labels[] = {"none", "label", "probs", "value"};
+  p_workspace.labels = LegacyWorkspaceFile::Labels{
+      node_labels[m_nodeAboveLabel], node_labels[m_nodeBelowLabel],
+      edge_labels[m_branchAboveLabel], edge_labels[m_branchBelowLabel]};
+  p_workspace.decimals = m_numDecimals;
+}
+
+void TreeRenderConfig::Load(const LegacyWorkspaceFile &p_workspace)
+{
+  for (const auto &color : p_workspace.colors) {
+    const wxColour value(color.red, color.green, color.blue);
+    if (color.player > 0) {
+      GetPlayerColor(color.player);
+      SetPlayerColor(color.player, value);
+    }
+    else if (color.player == 0) {
+      SetChanceColor(value);
+    }
+    else if (color.player == -1) {
+      SetTerminalColor(value);
+    }
+  }
+  if (p_workspace.font) {
+    const auto &font = *p_workspace.font;
+    SetFont(wxFont(font.size, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL, false,
+                   wxString::FromUTF8(font.face)));
+  }
+  const auto find = [](const std::string &value, const auto &names, auto fallback) {
+    const auto iter = std::find(std::begin(names), std::end(names), value);
+    return iter == std::end(names) ? fallback : static_cast<decltype(fallback)>(iter - names);
+  };
+  if (p_workspace.layout) {
+    const auto &layout = *p_workspace.layout;
+    static const std::string node_tokens[] = {"line", "box", "circle", "diamond", "dot"};
+    static const std::string branch_styles[] = {"line", "forktine"};
+    static const std::string branch_labels[] = {"horizontal", "rotated"};
+    static const std::string infoset_styles[] = {"lines", "circles"};
+    m_nodeSize = layout.node_size;
+    m_terminalSpacing = layout.terminal_spacing;
+    m_chanceToken = find(layout.chance_token, node_tokens, m_chanceToken);
+    m_playerToken = find(layout.player_token, node_tokens, m_playerToken);
+    m_terminalToken = find(layout.terminal_token, node_tokens, m_terminalToken);
+    m_branchLength = layout.branch_length;
+    m_tineLength = layout.tine_length;
+    m_branchStyle = find(layout.branch_style, branch_styles, m_branchStyle);
+    m_branchLabels = find(layout.branch_labels, branch_labels, m_branchLabels);
+    m_infosetJoin = find(layout.infoset_style, infoset_styles, m_infosetJoin);
+  }
+  if (p_workspace.labels) {
+    const auto &labels = *p_workspace.labels;
+    static const std::string node_labels[] = {"none",   "label",      "player",     "isetlabel",
+                                              "isetid", "realizprob", "beliefprob", "value"};
+    static const std::string edge_labels[] = {"none", "label", "probs", "value"};
+    m_nodeAboveLabel = find(labels.node_above, node_labels, m_nodeAboveLabel);
+    m_nodeBelowLabel = find(labels.node_below, node_labels, m_nodeBelowLabel);
+    m_branchAboveLabel = find(labels.branch_above, edge_labels, m_branchAboveLabel);
+    m_branchBelowLabel = find(labels.branch_below, edge_labels, m_branchBelowLabel);
+  }
+  if (p_workspace.decimals) {
+    m_numDecimals = *p_workspace.decimals;
+  }
+}
+
+wxBitmap MakeColorSwatch(const wxColour &p_color, int p_size)
+{
+  wxBitmap bitmap(p_size, p_size);
+  wxMemoryDC dc(bitmap);
+  dc.SetBackground(wxBrush(p_color));
+  dc.Clear();
+  dc.SelectObject(wxNullBitmap);
+  return bitmap;
+}
+
+} // namespace Gambit::GUI

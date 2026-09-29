@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/valnumber.cc
 // wxValidator specialization to gbtNumber
@@ -21,36 +21,35 @@
 //
 
 #include <cctype>
-#include <cstring>
-#include <cstdlib>
 
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
+#endif // WX_PRECOMP
 
-#include "gambit.h"
+#include "games.h"
 #include "valnumber.h"
 
-BEGIN_EVENT_TABLE(gbtNumberValidator, wxValidator)
-  EVT_CHAR(gbtNumberValidator::OnChar)
+namespace Gambit::GUI {
+BEGIN_EVENT_TABLE(NumberValidator, wxValidator)
+EVT_CHAR(NumberValidator::OnChar)
 END_EVENT_TABLE()
 
 static bool IsNumeric(const wxString &p_value)
 {
   bool seenDigit = false, seenSeparator = false;
 
-  for (int i = 0; i < (int) p_value.Length(); i++) {
+  for (int i = 0; i < static_cast<int>(p_value.Length()); i++) {
     if (isdigit(p_value[i])) {
       seenDigit = true;
       continue;
     }
-    else if ((p_value[i] == '.' && !seenSeparator) ||
-	     (p_value[i] == '/' && !seenSeparator && seenDigit)) {
+    if ((p_value[i] == '.' && !seenSeparator) ||
+        (p_value[i] == '/' && !seenSeparator && seenDigit)) {
       seenSeparator = true;
       continue;
     }
-    else if (i == 0 && p_value[i] == '-') {
+    if (i == 0 && p_value[i] == '-') {
       continue;
     }
     return false;
@@ -59,38 +58,37 @@ static bool IsNumeric(const wxString &p_value)
   if (p_value[p_value.Length() - 1] == '/') {
     return false;
   }
-  else {
-    return true;
-  }
+  return true;
 }
 
 //------------------------------------------------------------------------
-//               class gbtNumberValidator: Member functions
+//               class NumberValidator: Member functions
 //------------------------------------------------------------------------
 
-gbtNumberValidator::gbtNumberValidator(wxString *p_value)
+NumberValidator::NumberValidator(wxString *p_value)
   : m_stringValue(p_value), m_hasMin(false), m_hasMax(false)
-{ }
+{
+}
 
-gbtNumberValidator::gbtNumberValidator(wxString *p_value,
-				       const Gambit::Rational &p_minValue)
-  : m_stringValue(p_value), m_hasMin(true), m_hasMax(false),
-    m_minValue(p_minValue)
-{ }
+NumberValidator::NumberValidator(wxString *p_value, const Rational &p_minValue)
+  : m_stringValue(p_value), m_hasMin(true), m_hasMax(false), m_minValue(p_minValue)
+{
+}
 
-gbtNumberValidator::gbtNumberValidator(wxString *p_value,
-				       const Gambit::Rational &p_minValue,
-				       const Gambit::Rational &p_maxValue)
-  : m_stringValue(p_value), m_hasMin(true), m_hasMax(true),
-    m_minValue(p_minValue), m_maxValue(p_maxValue)
-{ }
+NumberValidator::NumberValidator(wxString *p_value, const Rational &p_minValue,
+                                 const Rational &p_maxValue)
+  : m_stringValue(p_value), m_hasMin(true), m_hasMax(true), m_minValue(p_minValue),
+    m_maxValue(p_maxValue)
+{
+}
 
-gbtNumberValidator::gbtNumberValidator(const gbtNumberValidator &p_validator)
+NumberValidator::NumberValidator(const NumberValidator &p_validator)
+  : m_stringValue(nullptr), m_hasMin(false), m_hasMax(true)
 {
   Copy(p_validator);
 }
 
-bool gbtNumberValidator::Copy(const gbtNumberValidator &p_validator)
+bool NumberValidator::Copy(const NumberValidator &p_validator)
 {
   wxValidator::Copy(p_validator);
   m_stringValue = p_validator.m_stringValue;
@@ -101,35 +99,36 @@ bool gbtNumberValidator::Copy(const gbtNumberValidator &p_validator)
   return true;
 }
 
-bool gbtNumberValidator::Validate(wxWindow *p_parent)
+bool NumberValidator::Validate(wxWindow *p_parent)
 {
   if (!m_stringValue) {
     return false;
   }
 
-  wxTextCtrl *control = (wxTextCtrl *) m_validatorWindow;
+  const auto *control = dynamic_cast<wxTextCtrl *>(m_validatorWindow);
 
   if (!control->IsEnabled()) {
     return true;
   }
 
-  wxString value(control->GetValue());
+  const wxString value(control->GetValue());
 
   if (!IsNumeric(value)) {
-    wxMessageBox(_T("The value ") + value + _T(" in ") +
-		 m_validatorWindow->GetName() + _T(" is not a valid number."),
-		 _("Error"), wxOK | wxICON_EXCLAMATION, p_parent);
+    wxMessageBox(_T("The value ") + value + _T(" in ") + m_validatorWindow->GetName() +
+                     _T(" is not a valid number."),
+                 _("Error"), wxOK | wxICON_EXCLAMATION, p_parent);
     m_validatorWindow->SetFocus();
     return false;
   }
 
-  if ((m_hasMin && Gambit::lexical_cast<Gambit::Rational>(std::string((const char *) value.mb_str())) < m_minValue) ||
-      (m_hasMax && Gambit::lexical_cast<Gambit::Rational>(std::string((const char *) value.mb_str())) > m_maxValue)) {
-    wxMessageBox(_T("The value ") + value + _T(" in ") +
-		 m_validatorWindow->GetName() + _T(" is out of the range [") +
-		 wxString(Gambit::lexical_cast<std::string>(m_minValue).c_str(), *wxConvCurrent) + _T(", ") + 
-		 wxString(Gambit::lexical_cast<std::string>(m_maxValue).c_str(), *wxConvCurrent) + _T("]."),
-		 _("Error"), wxOK | wxICON_EXCLAMATION, p_parent);
+  if ((m_hasMin && lexical_cast<Rational>(std::string(value.mb_str())) < m_minValue) ||
+      (m_hasMax && lexical_cast<Rational>(std::string(value.mb_str())) > m_maxValue)) {
+    wxMessageBox(
+        _T("The value ") + value + _T(" in ") + m_validatorWindow->GetName() +
+            _T(" is out of the range [") +
+            wxString(lexical_cast<std::string>(m_minValue).c_str(), *wxConvCurrent) + _T(", ") +
+            wxString(lexical_cast<std::string>(m_maxValue).c_str(), *wxConvCurrent) + _T("]."),
+        _("Error"), wxOK | wxICON_EXCLAMATION, p_parent);
     m_validatorWindow->SetFocus();
     return false;
   }
@@ -137,62 +136,79 @@ bool gbtNumberValidator::Validate(wxWindow *p_parent)
   return true;
 }
 
-bool gbtNumberValidator::TransferToWindow(void)
+bool NumberValidator::TransferToWindow()
 {
   if (!m_stringValue) {
     return false;
   }
 
-  wxTextCtrl *control = (wxTextCtrl *) m_validatorWindow;
+  auto *control = dynamic_cast<wxTextCtrl *>(m_validatorWindow);
   control->SetValue(*m_stringValue);
 
   return true;
 }
 
-bool gbtNumberValidator::TransferFromWindow(void)
+bool NumberValidator::TransferFromWindow()
 {
   if (!m_stringValue) {
     return false;
   }
 
-  wxTextCtrl *control = (wxTextCtrl *) m_validatorWindow;
+  const auto *control = dynamic_cast<wxTextCtrl *>(m_validatorWindow);
   *m_stringValue = control->GetValue();
 
   return TRUE;
 }
 
-void gbtNumberValidator::OnChar(wxKeyEvent &p_event)
+void NumberValidator::OnChar(wxKeyEvent &p_event)
 {
   if (m_validatorWindow) {
-    int keyCode = (int) p_event.GetKeyCode();
+    const int keyCode = (int)p_event.GetKeyCode();
 
     // we don't filter special keys and Delete
-    if (!(keyCode < WXK_SPACE || keyCode == WXK_DELETE || 
-	  keyCode > WXK_START) &&
-	(!isdigit(keyCode) &&
-	 keyCode != '.' && keyCode != '-' && keyCode != '/')) {
+    if (!(keyCode < WXK_SPACE || keyCode == WXK_DELETE || keyCode > WXK_START) &&
+        (!isdigit(keyCode) && keyCode != '.' && keyCode != '-' && keyCode != '/')) {
       if (!wxValidator::IsSilent()) {
-	wxBell();
+        wxBell();
       }
 
       return;
     }
 
-    wxTextCtrl *control = (wxTextCtrl *) m_validatorWindow;
-    wxString value = control->GetValue();
+    auto *control = dynamic_cast<wxTextCtrl *>(m_validatorWindow);
+    const wxString value = control->GetValue();
 
-    if ((keyCode == '.' || keyCode == '/') && 
-	(value.Find('.') != -1 || value.Find('/') != -1)) {
+    long start, end;
+    control->GetSelection(&start, &end);
+
+    // Reject edits which would produce a slash immediately followed by zero.
+    if (keyCode == '/' || keyCode == '0') {
+      wxString proposed = value;
+      proposed.Remove(start, end - start);
+      proposed.insert(start, wxString::Format("%c", keyCode));
+
+      if (proposed.Find(wxT("/0")) != wxNOT_FOUND) {
+        if (!IsSilent()) {
+          wxBell();
+        }
+        return;
+      }
+    }
+
+    if ((keyCode == '.' || keyCode == '/') && (value.Find('.') != -1 || value.Find('/') != -1)) {
       // At most one slash or decimal point is allowed
-      if (!wxValidator::IsSilent())  wxBell();
+      if (!IsSilent()) {
+        wxBell();
+      }
       return;
     }
 
-    if (keyCode == '/' && 
-	(control->GetInsertionPoint() == 0 ||
-	 (control->GetInsertionPoint() == 1 && value == wxT("-")))) {
+    if (keyCode == '/' && (control->GetInsertionPoint() == 0 ||
+                           (control->GetInsertionPoint() == 1 && value == wxT("-")))) {
       // Can't start with a slash
-      if (!wxValidator::IsSilent())  wxBell();
+      if (!IsSilent()) {
+        wxBell();
+      }
       return;
     }
 
@@ -200,27 +216,28 @@ void gbtNumberValidator::OnChar(wxKeyEvent &p_event)
       // Only permit minus signs at the start of the text
       long start, end;
       control->GetSelection(&start, &end);
-      
+
       if (start == end) {
-	// No selection; just see if inserting is OK
-	if (control->GetInsertionPoint() != 0) {
-	  if (!wxValidator::IsSilent())  wxBell();
-	  return;
-	}
+        // No selection; just see if inserting is OK
+        if (control->GetInsertionPoint() != 0) {
+          if (!wxValidator::IsSilent()) {
+            wxBell();
+          }
+          return;
+        }
       }
       else {
-	// There is a selection; is selection at beginning?
-	if (start != 0) {
-	  if (!wxValidator::IsSilent())  wxBell();
-	  return;
-	}	
+        // There is a selection; is selection at beginning?
+        if (start != 0) {
+          if (!IsSilent()) {
+            wxBell();
+          }
+          return;
+        }
       }
     }
   }
 
   p_event.Skip();
 }
-
-
-
-
+} // namespace Gambit::GUI

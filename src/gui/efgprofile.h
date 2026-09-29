@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/efgprofile.h
 // Extensive form behavior profile window
@@ -20,46 +20,40 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef EFGPROFILE_H
-#define EFGPROFILE_H
+#ifndef GAMBIT_GUI_EFGPROFILE_H
+#define GAMBIT_GUI_EFGPROFILE_H
 
-#include "wx/sheet/sheet.h"
+#include <wx/grid.h>
+
 #include "gamedoc.h"
+#include "profilelabels.h"
+#include "profilesort.h"
 
-class gbtBehavProfileList : public wxSheet, public gbtGameView {
-private:
-  // Overriding wxSheet members for data access
-  wxString GetCellValue(const wxSheetCoords &);
-  wxSheetCellAttr GetAttr(const wxSheetCoords &p_coords, wxSheetAttr_Type) const;
-  
-  // Overriding wxSheet members to disable selection behavior
-  bool SelectRow(int, bool = false, bool = false)
-    { return false; }
-  bool SelectRows(int, int, bool = false, bool = false)
-    { return false; }
-  bool SelectCol(int, bool = false, bool = false)
-    { return false; }
-  bool SelectCols(int, int, bool = false, bool = false)
-    { return false; }
-  bool SelectCell(const wxSheetCoords&, bool = false, bool = false)
-    { return false; }
-  bool SelectBlock(const wxSheetBlock&, bool = false, bool = false)
-    { return false; }
-  bool SelectAll(bool = false) { return false; }
-
-  // Overriding wxSheet member to suppress drawing of cursor
-  void DrawCursorCellHighlight(wxDC&, const wxSheetCellAttr &) { }
+namespace Gambit::GUI {
+class MixedBehaviorProfileList final : public wxGrid, public GameView {
+  /// The order in which the profiles are listed
+  ProfileSortOrder m_sortOrder;
+  /// Highlights the sorted column and the selected profile's row; owned by
+  /// the grid's table, which deletes it
+  ProfileLabelProvider *m_labels{nullptr};
 
   // Event handlers
-  void OnLabelClick(wxSheetEvent &);
-  void OnCellClick(wxSheetEvent &);
-    
-  // Overriding gbtGameView members
-  void OnUpdate(void);
+  void OnLabelClick(wxGridEvent &);
+  void OnCellClick(wxGridEvent &);
+  void OnSelectCell(wxGridEvent &);
+
+  void ResizeGrid(int p_rows, int p_cols);
+  void UpdateLabels();
+  void UpdateHighlights();
+  void UpdateCells();
+
+  // Overriding GameView members
+  void OnUpdate() override;
 
 public:
-  gbtBehavProfileList(wxWindow *p_parent, gbtGameDocument *p_doc);
-  virtual ~gbtBehavProfileList();
+  MixedBehaviorProfileList(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc);
+  ~MixedBehaviorProfileList() override;
 };
+} // namespace Gambit::GUI
 
-#endif  // EFGPROFILE_H
+#endif // GAMBIT_GUI_EFGPROFILE_H

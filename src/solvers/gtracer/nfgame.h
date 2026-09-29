@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gtracer/nfgame.h
+// FILE: src/solvers/gtracer/nfgame.h
 // Definition of normal form game class for Gametracer
 // This file is based on GameTracer v0.2, which is
 // Copyright (c) 2002, Ben Blum and Christian Shelton
@@ -22,61 +22,71 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_GTRACER_NFGAME_H
-#define GAMBIT_GTRACER_NFGAME_H
+#ifndef GAMBIT_SOLVERS_GTRACER_NFGAME_H
+#define GAMBIT_SOLVERS_GTRACER_NFGAME_H
 
 #include "gnmgame.h"
 #include "cmatrix.h"
 
-namespace Gambit {
-namespace gametracer {
+namespace Gambit::gametracer {
 
 class nfgame : public gnmgame {
- public:
-  friend std::ostream& operator<< (std::ostream& s, nfgame& g);
-  nfgame(int numPlayers, int *actions, const cvector &payoffs);
-  ~nfgame();
+public:
+  friend std::ostream &operator<<(std::ostream &s, nfgame &g);
+
+  nfgame(const std::vector<int> &actions);
+
+  ~nfgame() override = default;
 
   // Input: s[i] has integer index of player i's pure strategy
   // s is of length numPlayers
-  inline double getPurePayoff(int player, int *s) {
+  double getPurePayoff(int player, const std::vector<int> &s) const override
+  {
     return payoffs[findIndex(player, s)];
   }
 
-  inline void setPurePayoff(int player, int *s, double value) {
-    payoffs[findIndex(player, s)]= value;
+  void setPurePayoff(int player, const std::vector<int> &s, double value) override
+  {
+    payoffs[findIndex(player, s)] = value;
   }
 
-  double getMixedPayoff(int player, cvector &s);
-  void payoffMatrix(cmatrix &dest, cvector &s, double fuzz);
+  double getMixedPayoff(int player, const cvector &s) const override;
 
-  void getPayoffVector(cvector &dest, int player, const cvector &s);
-  
+  void payoffMatrix(cmatrix &dest, const cvector &s, double fuzz) const override;
 
- private:
-  int findIndex(int player, int *s);
-  void localPayoffMatrix(double *dest, int player1, int player2, cvector &s, double *m, int n);
-  void localPayoffVector(double *dest, int player, cvector &s, double *m, int n);
-  double localPayoff(cvector &s, double *m, int n);
-  double *scaleMatrix(cvector &s, double *m, int n);
+  void getPayoffVector(cvector &dest, int player, const cvector &s) const override;
+
+private:
+  int findIndex(int player, const std::vector<int> &s) const;
+
+  void localPayoffMatrix(double *dest, int player1, int player2, const cvector &s, double *m,
+                         int n) const;
+
+  void localPayoffVector(double *dest, int player, const cvector &s, double *m, int n) const;
+
+  double localPayoff(const cvector &s, double *m, int n) const;
+
+  double *scaleMatrix(const cvector &s, double *m, int n) const;
+
   cvector payoffs;
-  int *blockSize;
+  std::vector<int> blockSize;
 };
 
-inline std::ostream& operator<< (std::ostream& s, nfgame& g){
-
-  s<<g.numPlayers<<std::endl;
-  for (int i=0;i<g.numPlayers; i++){
-    if (i>0) s<< " ";
-    s<< g.actions[i];
+inline std::ostream &operator<<(std::ostream &s, nfgame &g)
+{
+  s << g.numPlayers << std::endl;
+  for (int i = 0; i < g.numPlayers; i++) {
+    if (i > 0) {
+      s << " ";
+    }
+    s << g.actions[i];
   }
-  s<<std::endl;
+  s << std::endl;
   s << g.payoffs;
-  s<<std::endl;
+  s << std::endl;
   return s;
 }
 
-}  // end namespace Gambit::gametracer
-}  // end namespace Gambit
+} // end namespace Gambit::gametracer
 
-#endif  // GAMBIT_GTRACER_NFGAME_H
+#endif // GAMBIT_SOLVERS_GTRACER_NFGAME_H

@@ -1,0 +1,424 @@
+//
+// This file is part of Gambit
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
+//
+// FILE: src/games/behavmixed.h
+// Behavior strategy profile classes
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+
+#ifndef GAMBIT_GAMES_BEHAVMIXED_H
+#define GAMBIT_GAMES_BEHAVMIXED_H
+
+#include <random>
+#include <vector>
+
+#include "game.h"
+#include "gametree.h"
+#include "behavspt.h"
+#include "seqmixed.h"
+#include "treelayout.h"
+
+namespace Gambit {
+
+///
+/// MixedBehaviorProfile<T> implements a randomized behavior profile on
+/// an extensive game.
+///
+template <class T> class MixedBehaviorProfile {
+protected:
+  Vector<T> m_probs;
+  BehaviorSupportProfile m_support;
+  /// The index into the action profile for a action (-1 if not in support)
+  std::map<GameAction, int> m_profileIndex;
+  unsigned int m_gameversion;
+  /// The flattened structure of the game tree on which cached quantities are computed
+  std::shared_ptr<const TreeLayout> m_layout;
+  /// The index into the action profile for each action of the layout (-1 if not in support)
+  std::vector<int> m_layoutProfileIndex;
+
+  /// Cached quantities, stored in arrays aligned with the tree layout
+  struct Cache {
+    enum class Level { None, Realizations, Beliefs, NodeValues, ActionValues, Regrets };
+
+    Level m_level{Level::None};
+    std::vector<T> m_realizProbs, m_beliefs; ///< by node
+    std::vector<T> m_infosetProbs;           ///< by information set
+    std::vector<T> m_nodeValues;             ///< by node, one entry per player
+    std::vector<T> m_infosetValues;          ///< by information set
+    std::vector<T> m_actionValues, m_regret; ///< by action
+
+    void Clear() { m_level = Level::None; }
+  };
+
+  mutable Cache m_cache;
+
+  /// @name Locating game elements in the tree layout
+  //@{
+  /// Record the layout of the game and how its actions map into the profile
+  void InitializeLayout();
+  std::optional<size_t> NodeIndex(const GameNode &p_node) const;
+  std::optional<size_t> InfosetIndex(const GameInfoset &p_infoset) const;
+  std::optional<size_t> PlayerIndex(const GamePlayer &p_player) const;
+  /// The probability of the action leading to the node with index p_node
+  T LayoutActionProb(size_t p_node) const;
+  /// The probability of the action with layout index p_action
+  T LayoutProfileProb(size_t p_action) const
+  {
+    const int index = m_layoutProfileIndex[p_action];
+    return (index < 0) ? T(0) : m_probs[index];
+  }
+  //@}
+
+  /// @name Auxiliary functions for cached computation of interesting values
+  //@{
+  /// Compute the realization probabilities of all nodes, and of information sets
+  /// (the probability a given information set is reached at least once)
+  void ComputeRealizationProbs() const;
+  /// Compute beliefs (conditional reach probabilities) at information sets reached
+  /// with positive probability, normalized over each set's upper frontier
+  void ComputeBeliefs() const;
+  /// Compute the expected payoffs conditional on reaching each node
+  void ComputeNodeValues() const;
+  /// Compute the expected (conditional) payoffs to each action
+  void ComputeActionValues() const;
+  /// Compute the conditional value of being at an information set, and corresponding
+  /// (agent) action regrets
+  void ComputeActionRegrets() const;
+
+  void EnsureRealizations() const
+  {
+    if (m_cache.m_level >= Cache::Level::Realizations) {
+      return;
+    }
+    ComputeRealizationProbs();
+    m_cache.m_level = Cache::Level::Realizations;
+  }
+  void EnsureBeliefs() const
+  {
+    EnsureRealizations();
+    if (m_cache.m_level >= Cache::Level::Beliefs) {
+      return;
+    }
+    ComputeBeliefs();
+    m_cache.m_level = Cache::Level::Beliefs;
+  }
+  void EnsureNodeValues() const
+  {
+    EnsureBeliefs();
+    if (m_cache.m_level >= Cache::Level::NodeValues) {
+      return;
+    }
+    ComputeNodeValues();
+    m_cache.m_level = Cache::Level::NodeValues;
+  }
+  void EnsureActionValues() const
+  {
+    EnsureNodeValues();
+    if (m_cache.m_level >= Cache::Level::ActionValues) {
+      return;
+    }
+    ComputeActionValues();
+    m_cache.m_level = Cache::Level::ActionValues;
+  }
+  void EnsureRegrets() const
+  {
+    EnsureActionValues();
+    if (m_cache.m_level >= Cache::Level::Regrets) {
+      return;
+    }
+    ComputeActionRegrets();
+    m_cache.m_level = Cache::Level::Regrets;
+  }
+
+  //@}
+
+  /// @name Converting mixed strategies to behavior
+  //@{
+  void BehaviorStrat(const GamePlayer &, const GameNode &, std::map<GameNode, T> &,
+                     std::map<GameNode, T> &);
+  void RealizationProbs(const MixedStrategyProfile<T> &, const GamePlayer &,
+                        const std::map<GameInfosetRep *, int> &, GameNodeRep *,
+                        std::map<GameNode, T> &, std::map<GameNode, T> &);
+  //@}
+
+  /// Check underlying game has not changed; raise exception if it has
+  void CheckVersion() const
+  {
+    if (IsInvalidated()) {
+      throw GameStructureChangedException();
+    }
+  }
+
+public:
+  /// @name Lifecycle
+  //@{
+  explicit MixedBehaviorProfile(const Game &);
+  explicit MixedBehaviorProfile(const BehaviorSupportProfile &);
+  MixedBehaviorProfile(const MixedBehaviorProfile<T> &) = default;
+  explicit MixedBehaviorProfile(const MixedStrategyProfile<T> &);
+  MixedBehaviorProfile(const MixedSequenceProfile<T> &);
+  ~MixedBehaviorProfile() = default;
+
+  MixedBehaviorProfile<T> &operator=(const MixedBehaviorProfile<T> &);
+  MixedBehaviorProfile<T> &operator=(const Vector<T> &p)
+  {
+    m_cache.Clear();
+    m_probs = p;
+    return *this;
+  }
+  MixedBehaviorProfile<T> &operator=(const T &x)
+  {
+    m_cache.Clear();
+    m_probs = x;
+    return *this;
+  }
+
+  //@}
+
+  /// @name Operator overloading
+  //@{
+  bool operator==(const MixedBehaviorProfile<T> &p_profile) const
+  {
+    return (m_support == p_profile.m_support && m_probs == p_profile.m_probs);
+  }
+
+  const T &operator[](const GameAction &p_action) const
+  {
+    return m_probs[m_profileIndex.at(p_action)];
+  }
+  T &operator[](const GameAction &p_action)
+  {
+    m_cache.Clear();
+    return m_probs[m_profileIndex.at(p_action)];
+  }
+
+  const T &operator[](int a) const { return m_probs[a]; }
+  T &operator[](int a)
+  {
+    m_cache.Clear();
+    return m_probs[a];
+  }
+
+  operator const Vector<T> &() const { return m_probs; }
+  //@}
+
+  /// @name Initialization, validation
+  //@{
+  /// Set the profile to the centroid
+  void SetCentroid();
+  /// Set the behavior at any undefined information set to the centroid
+  void UndefinedToCentroid();
+  /// Create a new behaviour strategy profile where strategies are played
+  /// in the same proportions, but with probabilities for each player
+  /// summing to one.
+  MixedBehaviorProfile<T> Normalize() const;
+  //@}
+
+  /// @name General data access
+  //@{
+  size_t BehaviorProfileLength() const { return m_probs.size(); }
+  Game GetGame() const { return m_support.GetGame(); }
+  const BehaviorSupportProfile &GetSupport() const { return m_support; }
+  /// Returns whether the profile has been invalidated by a subsequent revision to the game
+  bool IsInvalidated() const { return m_gameversion != m_support.GetGame()->GetVersion(); }
+
+  bool IsDefinedAt(GameInfoset p_infoset) const;
+  //@}
+
+  /// @name Computation of interesting quantities
+  //@{
+  T GetPayoff(const GamePlayer &p_player) const
+  {
+    CheckVersion();
+    EnsureNodeValues();
+    const auto player = PlayerIndex(p_player);
+    return (player) ? m_cache.m_nodeValues[*player] : T(0);
+  }
+  T GetLiapValue() const;
+  T GetAgentLiapValue() const;
+
+  const T &GetRealizProb(const GameNode &node) const;
+  T GetInfosetProb(const GameInfoset &p_infoset) const;
+  /// Returns the belief at a given non-terminal node:
+  /// the probability of reaching it conditional on reaching its infoset,
+  /// normalised over the infoset's upper frontier (Halpern and Pass, 2021).
+  /// Returns std::nullopt for a terminal node, or if the infoset is not reached.
+  std::optional<T> GetBeliefProb(const GameNode &node) const;
+  Vector<T> GetPayoff(const GameNode &node) const;
+  const T &GetPayoff(const GamePlayer &p_player, const GameNode &p_node) const;
+  std::optional<T> GetPayoff(const GameInfoset &p_infoset) const;
+  std::optional<T> GetPayoff(const GameAction &act) const;
+  T GetActionProb(const GameAction &act) const;
+
+  /// @brief Computes the regret to playing \p p_action
+  /// @details Computes the regret to the player of playing action \p p_action
+  ///          against the profile.  The regret is defined as the difference
+  ///          between the best-response payoff and the payoff to playing
+  ///          \p p_action.
+  /// @param[in] p_action  The action to compute the regret for.
+  /// @sa GetRegret(const GameInfoset &) const
+  ///     GetAgentMaxRegret() const
+  T GetRegret(const GameAction &p_action) const;
+
+  /// @brief Computes the regret at information set \p p_infoset
+  /// @details Computes the regret at the information set to the player of playing
+  ///          their mixed action as specified in the profile.  The regret is defined
+  ///          as the difference between the payoff of the best response action and
+  ///          the payoff to playing their specified mixed action.
+  /// @param[in] p_infoset  The information set to compute the regret at.
+  /// @sa GetRegret(const GameAction &) const
+  ///     GetAgentMaxRegret() const
+  T GetRegret(const GameInfoset &p_infoset) const;
+
+  /// @brief Computes the maximum regret at any information set in the profile
+  /// @details Computes the maximum of the regrets of the information sets in the profile.
+  /// @sa GetRegret(const GameInfoset &) const
+  ///     GetRegret(const GameAction &) const
+  ///     GetMaxRegret() const
+  T GetAgentMaxRegret() const;
+
+  /// @brief Computes the maximum regret for any player in the profile
+  /// @sa GetAgentMaxRegret() const
+  ///
+  T GetMaxRegret() const;
+
+  /// @brief Computes the derivatives of all action values with respect to the log
+  ///        probabilities of all actions
+  /// @details Assumes the game has perfect recall and the profile is totally mixed.
+  /// @param[out] p_derivs Resized to a square matrix indexed by position in the profile;
+  ///             entry (a, b) is the derivative of the value of action a with respect to the
+  ///             log probability of action b.
+  void DiffActionValues(Matrix<T> &p_derivs) const;
+
+  MixedStrategyProfile<T> ToMixedProfile() const;
+
+  /// @brief Converts the profile to one on the full support of the game
+  MixedBehaviorProfile<T> ToFullSupport() const;
+  //@}
+};
+
+/// @brief Generate a mixed behavior profile by drawing from the uniform distribution over the
+///        set of mixed behavior profiles
+template <class Generator>
+[[nodiscard]] MixedBehaviorProfile<double> NewRandomBehaviorProfile(const Game &p_game,
+                                                                    Generator &generator)
+{
+  auto profile = MixedBehaviorProfile<double>(p_game);
+  std::exponential_distribution<> dist(1); // NOLINT(misc-const-correctness)
+  for (auto player : p_game->GetPlayers()) {
+    for (auto infoset : player->GetInfosets()) {
+      for (auto action : infoset->GetActions()) {
+        profile[action] = dist(generator);
+      }
+    }
+  }
+  return profile.Normalize();
+}
+
+/// @brief As NewRandomBehaviorProfile(p_game, generator), using an unseeded-by-the-caller
+///        generator -- for callers who don't need the sequence of profiles drawn to be
+///        reproducible. Pass an explicit generator instead if reproducibility matters.
+[[nodiscard]] inline MixedBehaviorProfile<double> NewRandomBehaviorProfile(const Game &p_game)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomBehaviorProfile(p_game, generator);
+}
+
+/// @brief Generate `count` mixed behavior profiles, each as
+///        NewRandomBehaviorProfile(p_game, generator).
+template <class Generator>
+[[nodiscard]] std::vector<MixedBehaviorProfile<double>>
+NewRandomBehaviorProfiles(const Game &p_game, int count, Generator &generator)
+{
+  std::vector<MixedBehaviorProfile<double>> profiles;
+  profiles.reserve(count);
+  for (int i = 0; i < count; i++) {
+    profiles.push_back(NewRandomBehaviorProfile(p_game, generator));
+  }
+  return profiles;
+}
+
+/// @brief As NewRandomBehaviorProfiles(p_game, count, generator), using an
+///        unseeded-by-the-caller generator -- see NewRandomBehaviorProfile(p_game) above.
+[[nodiscard]] inline std::vector<MixedBehaviorProfile<double>>
+NewRandomBehaviorProfiles(const Game &p_game, int count)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomBehaviorProfiles(p_game, count, generator);
+}
+
+/// @brief Generate a mixed behavior profile by drawing from the uniform distribution over the
+///        set of mixed behavior profiles, restricted to rational probabilities with denominator
+///        `denom`.
+template <class Generator>
+[[nodiscard]] MixedBehaviorProfile<Rational>
+NewRandomBehaviorProfile(const Game &p_game, int denom, Generator &generator)
+{
+  auto profile = MixedBehaviorProfile<Rational>(p_game);
+  for (auto player : p_game->GetPlayers()) {
+    for (auto infoset : player->GetInfosets()) {
+      const std::list<Rational> dist =
+          UniformOnSimplex(denom, infoset->GetActions().size(), generator);
+      auto prob = dist.cbegin();
+      for (auto action : infoset->GetActions()) {
+        profile[action] = *prob;
+        prob++;
+      }
+    }
+  }
+  return profile;
+}
+
+/// @brief As NewRandomBehaviorProfile(p_game, denom, generator), using an
+///        unseeded-by-the-caller generator -- see NewRandomBehaviorProfile(p_game) above.
+[[nodiscard]] inline MixedBehaviorProfile<Rational> NewRandomBehaviorProfile(const Game &p_game,
+                                                                             int denom)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomBehaviorProfile(p_game, denom, generator);
+}
+
+/// @brief Generate `count` mixed behavior profiles, each as
+///        NewRandomBehaviorProfile(p_game, denom, generator).
+template <class Generator>
+[[nodiscard]] std::vector<MixedBehaviorProfile<Rational>>
+NewRandomBehaviorProfiles(const Game &p_game, int count, int denom, Generator &generator)
+{
+  std::vector<MixedBehaviorProfile<Rational>> profiles;
+  profiles.reserve(count);
+  for (int i = 0; i < count; i++) {
+    profiles.push_back(NewRandomBehaviorProfile(p_game, denom, generator));
+  }
+  return profiles;
+}
+
+/// @brief As NewRandomBehaviorProfiles(p_game, count, denom, generator), using an
+///        unseeded-by-the-caller generator -- see NewRandomBehaviorProfile(p_game) above.
+[[nodiscard]] inline std::vector<MixedBehaviorProfile<Rational>>
+NewRandomBehaviorProfiles(const Game &p_game, int count, int denom)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomBehaviorProfiles(p_game, count, denom, generator);
+}
+
+} // end namespace Gambit
+
+#endif // GAMBIT_GAMES_BEHAVMIXED_H

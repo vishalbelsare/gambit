@@ -5,17 +5,15 @@ Detailed table of contents
 
 .. toctree::
    :maxdepth: 3
-  
+
    intro
-   gui
+   pygambit
    tools
-   pyapi
-   samples
-   ideas
-   build
+   gui
+   developer
    formats
    biblio
-   
+
 .. Indices and tables
 .. ==================
 

@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/function.cc
+// FILE: src/core/function.cc
 // Implementation of function and function minimization routines
 //
 // These routines derive from the N-dimensional function minimization
@@ -27,9 +27,8 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-
 #include <cmath>
-#include "gambit.h"
+
 #include "function.h"
 
 using namespace Gambit;
@@ -44,19 +43,18 @@ using namespace Gambit;
 // vector perpendicular to the plane, then subtracting to compute the
 // component parallel to the plane.)
 //
-void FunctionOnSimplices::Project(Vector<double> &x, 
-				  const Array<int> &lengths) const
+void FunctionOnSimplices::Project(Vector<double> &x, const Array<size_t> &lengths) const
 {
   int index = 1;
-  for (int part = 1; part <= lengths.Length(); part++)  {
+  for (size_t part = 1; part <= lengths.size(); part++) {
     double avg = 0.0;
-    int j;
-    for (j = 1; j <= lengths[part]; j++, index++)  {
+    size_t j;
+    for (j = 1; j <= lengths[part]; j++, index++) {
       avg += x[index];
     }
-    avg /= (double) lengths[part];
+    avg /= static_cast<double>(lengths[part]);
     index -= lengths[part];
-    for (j = 1; j <= lengths[part]; j++, index++)  {
+    for (j = 1; j <= lengths[part]; j++, index++) {
       x[index] -= avg;
     }
   }
@@ -70,140 +68,129 @@ void FunctionOnSimplices::Project(Vector<double> &x,
 // These routines are based on ones found in
 // multimin/conjugate_pr.c in the GSL 1.2 distribution
 
-void
-ConjugatePRMinimizer::AlphaXPlusY(double alpha,
-				  const Vector<double> &x, Vector<double> &y)
+void ConjugatePRMinimizer::AlphaXPlusY(double alpha, const Vector<double> &x, Vector<double> &y)
 {
-  for (int i = 1; i <= y.Length(); i++) {
+  for (size_t i = 1; i <= y.size(); i++) {
     y[i] += alpha * x[i];
   }
 }
 
-// These routines are drawn from comparably-named ones in 
+// These routines are drawn from comparably-named ones in
 // multimin/directional_minimize.c in GSL.
 
-void
-ConjugatePRMinimizer::TakeStep(const Vector<double> &x, const Vector<double> &p,
-			       double step, double lambda, 
-			       Vector<double> &x1, Vector<double> &dx)
+void ConjugatePRMinimizer::TakeStep(const Vector<double> &p_x, const Vector<double> &p_p,
+                                    double p_step, double p_lambda, Vector<double> &p_x1,
+                                    Vector<double> &p_dx)
 {
-  dx = 0.0;
-  AlphaXPlusY(-step * lambda, p, dx);
-  x1 = x;
-  AlphaXPlusY(1.0, dx, x1);
+  p_dx = 0.0;
+  AlphaXPlusY(-p_step * p_lambda, p_p, p_dx);
+  p_x1 = p_x;
+  AlphaXPlusY(1.0, p_dx, p_x1);
 }
 
-void 
-ConjugatePRMinimizer::IntermediatePoint(const Function &fdf,
-					const Vector<double> &x, 
-					const Vector<double> &p,
-					double lambda, 
-					double pg,
-					double stepa, double stepc,
-					double fa, double fc,
-					Vector<double> &x1, Vector<double> &dx,
-					Vector<double> &gradient,
-					double &step, double &f)
+void ConjugatePRMinimizer::IntermediatePoint(const Function &p_fdf, const Vector<double> &p_x,
+                                             const Vector<double> &p_p, double p_lambda,
+                                             double p_pg, double p_stepa, double p_stepc,
+                                             double p_fa, double p_fc, Vector<double> &p_x1,
+                                             Vector<double> &p_dx, Vector<double> &p_gradient,
+                                             double &p_step, double &p_f)
 {
   double stepb, fb;
 
 trial:
-  double u = fabs (pg * lambda * stepc);
-  if ((fc - fa) + u == 0) {
+  const double u = fabs(p_pg * p_lambda * p_stepc);
+  if ((p_fc - p_fa) + u == 0) {
     // TLT: Added this check 2002/08/31 due to floating point exceptions
     // under MSW.  Not really sure how to handle this correctly.
     throw FunctionMinimizerError();
   }
-  stepb = 0.5 * stepc * u / ((fc - fa) + u);
+  stepb = 0.5 * p_stepc * u / ((p_fc - p_fa) + u);
 
-  TakeStep(x, p, stepb, lambda, x1, dx);
+  TakeStep(p_x, p_p, stepb, p_lambda, p_x1, p_dx);
 
-  fb = fdf.Value(x1);
+  fb = p_fdf.Value(p_x1);
 
-  if (fb >= fa  && stepb > 0.0) {
+  if (fb >= p_fa && stepb > 0.0) {
     /* downhill step failed, reduce step-size and try again */
-    fc = fb;
-    stepc = stepb;
+    p_fc = fb;
+    p_stepc = stepb;
     goto trial;
   }
 
-  step = stepb;
-  f = fb;
-  fdf.Gradient(x1, gradient);
+  p_step = stepb;
+  p_f = fb;
+  p_fdf.Gradient(p_x1, p_gradient);
 }
 
-void
-ConjugatePRMinimizer::Minimize(const Function &fdf,
-			       const Vector<double> &x, const Vector<double> &p,
-			       double lambda,
-			       double stepa, double stepb, double stepc,
-			       double fa, double fb, double fc, double tol,
-			       Vector<double> &x1, Vector<double> &dx1, 
-			       Vector<double> &x2, Vector<double> &dx2, 
-			       Vector<double> &gradient,
-			       double &step, double &f, double &gnorm)
+void ConjugatePRMinimizer::Minimize(const Function &p_fdf, const Vector<double> &p_x,
+                                    const Vector<double> &p_p, double p_lambda, double p_stepa,
+                                    double p_stepb, double p_stepc, double p_fa, double p_fb,
+                                    double p_fc, double p_tol, Vector<double> &p_x1,
+                                    Vector<double> &p_dx1, Vector<double> &p_x2,
+                                    Vector<double> &p_dx2, Vector<double> &p_gradient,
+                                    double &p_step, double &p_f, double &p_gnorm)
 {
   /* Starting at (x0, f0) move along the direction p to find a minimum
      f(x0 - lambda * p), returning the new point x1 = x0-lambda*p,
      f1=f(x1) and g1 = grad(f) at x1.  */
 
-  double u = stepb;
-  double v = stepa;
-  double w = stepc;
-  double fu = fb;
-  double fv = fa;
-  double fw = fc;
+  double u = p_stepb;
+  double v = p_stepa;
+  double w = p_stepc;
+  double fu = p_fb;
+  double fv = p_fa;
+  double fw = p_fc;
 
   double old2 = fabs(w - v);
   double old1 = fabs(v - u);
 
   double stepm, fm, pg, gnorm1;
 
-  double iter = 0;
+  double num_trials = 0;
 
-  x2 = x1;
-  dx2 = dx1;
+  p_x2 = p_x1;
+  p_dx2 = p_dx1;
 
-  f = fb;
-  step = stepb;
-  gnorm = std::sqrt(gradient.NormSquared());
+  p_f = p_fb;
+  p_step = p_stepb;
+  p_gnorm = std::sqrt(p_gradient.NormSquared());
 
 mid_trial:
-  iter++;
+  num_trials++;
 
-  if (iter > 10) {
-    return;  /* MAX ITERATIONS */
+  if (num_trials > 10) {
+    return; /* MAX ITERATIONS */
   }
 
-  double dw = w - u;
-  double dv = v - u;
+  const double dw = w - u;
+  const double dv = v - u;
   double du = 0.0;
 
-  double e1 = ((fv - fu) * dw * dw + (fu - fw) * dv * dv);
-  double e2 = 2.0 * ((fv - fu) * dw + (fu - fw) * dv);
+  const double e1 = ((fv - fu) * dw * dw + (fu - fw) * dv * dv);
+  const double e2 = 2.0 * ((fv - fu) * dw + (fu - fw) * dv);
 
   if (e2 != 0.0) {
     du = e1 / e2;
   }
 
-  if (du > 0 && du < (stepc - stepb) && fabs(du) < 0.5 * old2) {
+  if (du > 0 && du < (p_stepc - p_stepb) && fabs(du) < 0.5 * old2) {
     stepm = u + du;
   }
-  else if (du < 0 && du > (stepa - stepb) && fabs(du) < 0.5 * old2) {
+  else if (du < 0 && du > (p_stepa - p_stepb) && fabs(du) < 0.5 * old2) {
     stepm = u + du;
   }
-  else if ((stepc - stepb) > (stepb - stepa)) {
-    stepm = 0.38 * (stepc - stepb) + stepb;
+  else if ((p_stepc - p_stepb) > (p_stepb - p_stepa)) {
+    stepm = 0.38 * (p_stepc - p_stepb) + p_stepb;
   }
   else {
-    stepm = stepb - 0.38 * (stepb - stepa);
+    stepm = p_stepb - 0.38 * (p_stepb - p_stepa);
   }
 
-  TakeStep(x, p, stepm, lambda, x1, dx1);
+  TakeStep(p_x, p_p, stepm, p_lambda, p_x1, p_dx1);
 
-  fm = fdf.Value(x1);
+  fm = p_fdf.Value(p_x1);
 
-  if (fm > fb) {
+  if (fm > p_fb) {
     if (fm < fv) {
       w = v;
       v = stepm;
@@ -215,17 +202,17 @@ mid_trial:
       fw = fm;
     }
 
-    if (stepm < stepb) {
-      stepa = stepm;
-      fa = fm;
+    if (stepm < p_stepb) {
+      p_stepa = stepm;
+      p_fa = fm;
     }
     else {
-      stepc = stepm;
-      fc = fm;
+      p_stepc = stepm;
+      p_fc = fm;
     }
     goto mid_trial;
   }
-  else if (fm <= fb) {
+  else if (fm <= p_fb) {
     old2 = old1;
     old1 = fabs(u - stepm);
     w = v;
@@ -235,49 +222,45 @@ mid_trial:
     fv = fu;
     fu = fm;
 
-    x2 = x1;
-    dx2 = dx1;
+    p_x2 = p_x1;
+    p_dx2 = p_dx1;
 
-    fdf.Gradient(x1, gradient);
-    pg = p * gradient;
-    gnorm1 = std::sqrt(gradient.NormSquared());
+    p_fdf.Gradient(p_x1, p_gradient);
+    pg = p_p * p_gradient;
+    gnorm1 = std::sqrt(p_gradient.NormSquared());
 
-    f = fm;
-    step = stepm;
-    gnorm = gnorm1;
+    p_f = fm;
+    p_step = stepm;
+    p_gnorm = gnorm1;
 
     if (gnorm1 == 0.0) {
       return;
     }
 
-    if (fabs (pg * lambda / gnorm1) < tol) {
+    if (fabs(pg * p_lambda / gnorm1) < p_tol) {
       return; /* SUCCESS */
     }
 
-    if (stepm < stepb) {
-      stepc = stepb;
-      fc = fb;
-      stepb = stepm;
-      fb = fm;
+    if (stepm < p_stepb) {
+      p_stepc = p_stepb;
+      p_fc = p_fb;
+      p_stepb = stepm;
+      p_fb = fm;
     }
     else {
-      stepa = stepb;
-      fa = fb;
-      stepb = stepm;
-      fb = fm;
+      p_stepa = p_stepb;
+      p_fa = p_fb;
+      p_stepb = stepm;
+      p_fb = fm;
     }
     goto mid_trial;
   }
 }
 
-ConjugatePRMinimizer::ConjugatePRMinimizer(int n)
-  : x1(n), dx1(n), x2(n), p(n), g0(n)
-{ }
+ConjugatePRMinimizer::ConjugatePRMinimizer(int n) : x1(n), dx1(n), x2(n), p(n), g0(n) {}
 
-void ConjugatePRMinimizer::Set(const Function &fdf,
-			       const Vector<double> &x, double &f,
-			       Vector<double> &gradient, double step_size,
-			       double p_tol)
+void ConjugatePRMinimizer::Set(const Function &fdf, const Vector<double> &x, double &f,
+                               Vector<double> &gradient, double step_size, double p_tol)
 {
   iter = 0;
   step = step_size;
@@ -291,24 +274,22 @@ void ConjugatePRMinimizer::Set(const Function &fdf,
   p = gradient;
   g0 = gradient;
 
-  double gnorm = std::sqrt(gradient.NormSquared());
+  const double gnorm = std::sqrt(gradient.NormSquared());
   pnorm = gnorm;
   g0norm = gnorm;
 }
 
-void ConjugatePRMinimizer::Restart(void)
-{
-  iter = 0;
-}
+void ConjugatePRMinimizer::Restart() { iter = 0; }
 
-bool ConjugatePRMinimizer::Iterate(const Function &fdf,
-				   Vector<double> &x, double &f,
-				   Vector<double> &gradient, 
-				   Vector<double> &dx)
+bool ConjugatePRMinimizer::Iterate(const Function &fdf, Vector<double> &x, double &f,
+                                   Vector<double> &gradient, Vector<double> &dx)
 {
-  double fa = f, fb, fc;
+  const double fa = f;
+  double fb, fc;
   double dir;
-  double stepa = 0.0, stepb, stepc = step, tol = m_tol;
+  const double stepa = 0.0;
+  double stepb;
+  const double stepc = step, tol = m_tol;
 
   double g1norm;
   double pg;
@@ -342,20 +323,19 @@ bool ConjugatePRMinimizer::Iterate(const Function &fdf,
   /* Do a line minimisation in the region (xa,fa) (xc,fc) to find an
      intermediate (xb,fb) satisifying fa > fb < fc.  Choose an initial
      xb based on parabolic interpolation */
-  IntermediatePoint(fdf, x, p, dir / pnorm, pg,
-		    stepa, stepc, fa, fc, x1, dx1, gradient, stepb, fb);
+  IntermediatePoint(fdf, x, p, dir / pnorm, pg, stepa, stepc, fa, fc, x1, dx1, gradient, stepb,
+                    fb);
 
   if (stepb == 0.0) {
     return false;
   }
 
-  Minimize(fdf, x, p, dir / pnorm,
-	   stepa, stepb, stepc, fa, fb, fc, tol,
-	   x1, dx1, x2, dx, gradient, step, f, g1norm);
+  Minimize(fdf, x, p, dir / pnorm, stepa, stepb, stepc, fa, fb, fc, tol, x1, dx1, x2, dx, gradient,
+           step, f, g1norm);
   x = x2;
 
   /* Choose a new conjugate direction for the next step */
-  iter = (iter + 1) % x.Length();
+  iter = (iter + 1) % x.size();
 
   if (iter == 0) {
     p = gradient;
@@ -364,9 +344,9 @@ bool ConjugatePRMinimizer::Iterate(const Function &fdf,
   else {
     /* p' = g1 - beta * p */
     double g0g1, beta;
-    AlphaXPlusY(-1.0, gradient, g0);   /* g0' = g0 - g1 */
-    g0g1 = g0 * gradient;              /* g1g0 = (g0-g1).g1 */
-    beta = g0g1 / (g0norm*g0norm);     /* beta = -((g1 - g0).g1)/(g0.g0) */
+    AlphaXPlusY(-1.0, gradient, g0); /* g0' = g0 - g1 */
+    g0g1 = g0 * gradient;            /* g1g0 = (g0-g1).g1 */
+    beta = g0g1 / (g0norm * g0norm); /* beta = -((g1 - g0).g1)/(g0.g0) */
 
     p *= -beta;
     AlphaXPlusY(1.0, gradient, p);

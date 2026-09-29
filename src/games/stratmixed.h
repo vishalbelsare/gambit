@@ -1,0 +1,476 @@
+//
+// This file is part of Gambit
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
+//
+// FILE: src/games/stratmixed.h
+// Declaration of mixed strategy profile classes
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program; if not, write to the Free Software
+// Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+//
+
+#ifndef GAMBIT_GAMES_STRATMIXED_H
+#define GAMBIT_GAMES_STRATMIXED_H
+
+#include <random>
+#include <vector>
+
+#include "core/matrix.h"
+#include "core/vector.h"
+#include "core/segment.h"
+#include "games/game.h"
+#include "games/stratspt.h"
+
+namespace Gambit {
+
+template <class T> class MixedStrategyProfileRep {
+protected:
+  SegmentedVector<T> m_probs;
+  SegmentedArray<long> m_offsets;
+  StrategySupportProfile m_support;
+  /// The index into the strategy profile for a strategy (-1 if not in support)
+  std::map<GameStrategy, int> m_profileIndex;
+  unsigned int m_gameversion;
+
+  long StrategyOffset(const GameStrategy &s) const
+  {
+    const auto &space = this->GetSupport().GetGame()->m_pureStrategies;
+    const auto &player = s->GetPlayer();
+    const size_t i = player->GetNumber() - 1;
+    return (s->GetNumber() - 1) * space.m_strides[i];
+  }
+
+public:
+  explicit MixedStrategyProfileRep(const StrategySupportProfile &);
+  virtual ~MixedStrategyProfileRep() = default;
+  virtual std::unique_ptr<MixedStrategyProfileRep> Copy() const = 0;
+
+  const StrategySupportProfile &GetSupport() const { return m_support; }
+  unsigned int GetGameVersion() const { return m_gameversion; }
+
+  void SetCentroid();
+  std::unique_ptr<MixedStrategyProfileRep> Normalize() const;
+  const T &operator[](int i) const { return m_probs.GetFlattened()[i]; }
+  T &operator[](int i)
+  {
+    OnProfileChanged();
+    return m_probs.GetFlattened()[i];
+  }
+  /// Returns the probability the strategy is played
+  const T &operator[](const GameStrategy &p_strategy) const
+  {
+    return m_probs.GetFlattened()[m_profileIndex.at(p_strategy)];
+  }
+  /// Returns the probability the strategy is played
+  T &operator[](const GameStrategy &p_strategy)
+  {
+    OnProfileChanged();
+    return m_probs.GetFlattened()[m_profileIndex.at(p_strategy)];
+  }
+  /// Set the strategy of the corresponding player to a pure strategy
+  void SetStrategy(const GameStrategy &p_strategy)
+  {
+    for (const auto &s : m_support.GetStrategies(p_strategy->GetPlayer())) {
+      (*this)[s] = static_cast<T>(0);
+    }
+    (*this)[p_strategy] = static_cast<T>(1);
+    OnProfileChanged();
+  }
+  const Vector<T> &GetProbVector() const { return m_probs.GetFlattened(); }
+  void SetProbVector(const Vector<T> &p_vector)
+  {
+    m_probs.SetFlattened(p_vector);
+    OnProfileChanged();
+  }
+  void SetProbConstant(const T &c)
+  {
+    m_probs.GetFlattened() = c;
+    OnProfileChanged();
+  }
+  unsigned int GetProfileIndex(const GameStrategy &p_strategy) const
+  {
+    return m_profileIndex.at(p_strategy);
+  }
+  virtual T GetPayoff(int pl) const = 0;
+  virtual T GetPayoffDeriv(int pl, const GameStrategy &) const = 0;
+  virtual bool GetPayoffDerivs(int pl, Vector<T> &p_derivs) const { return false; }
+  virtual T GetPayoffDeriv(int pl, const GameStrategy &, const GameStrategy &) const = 0;
+  /// Computes the payoffs of the strategies of player pl, and their derivatives with respect to
+  /// the probabilities of the strategies of the other players; see
+  /// MixedStrategyProfile::GetPayoffDerivBlock.  The default computes each derivative separately.
+  virtual void GetPayoffDerivBlock(int pl, Vector<T> &p_values, Matrix<T> &p_derivs) const;
+
+  T GetPayoff(const GamePlayer &p_player) const { return GetPayoff(p_player->GetNumber()); }
+  T GetPayoff(const GameStrategy &p_strategy) const
+  {
+    return GetPayoffDeriv(p_strategy->GetPlayer()->GetNumber(), p_strategy);
+  }
+
+  virtual void OnProfileChanged() const {}
+};
+
+/// \brief A probability distribution over strategies in a game
+///
+/// A probability distribution over strategies, such that each player
+/// independently chooses from among his strategies with specified
+/// probabilities.
+template <class T> class MixedStrategyProfile {
+  struct Cache {
+    bool m_valid{false};
+    std::map<GamePlayer, T> m_payoffs;
+    std::map<GamePlayer, std::map<GameStrategy, T>> m_strategyValues;
+
+    void clear()
+    {
+      m_valid = false;
+      m_payoffs.clear();
+      m_strategyValues.clear();
+    }
+  };
+
+  std::unique_ptr<MixedStrategyProfileRep<T>> m_rep;
+  mutable Cache m_cache;
+
+  /// Check underlying game has not changed; raise exception if it has
+  void CheckVersion() const
+  {
+    if (HasOutdatedGameVersion()) {
+      throw GameStructureChangedException();
+    }
+  }
+  /// Used to read payoffs from cache or compute them and cache them if needed
+  void ComputePayoffs() const;
+
+  /// Reset cache for payoffs and strategy values
+  void InvalidateCache() const { m_cache.clear(); }
+
+public:
+  /// @name Lifecycle
+  //@{
+  explicit MixedStrategyProfile(std::unique_ptr<MixedStrategyProfileRep<T>> &&p_rep)
+    : m_rep(std::move(p_rep))
+  {
+  }
+  /// Convert a behavior strategy profile to a mixed strategy profile
+  explicit MixedStrategyProfile(const MixedBehaviorProfile<T> &);
+  /// Make a copy of the mixed strategy profile
+  MixedStrategyProfile(const MixedStrategyProfile &p_profile) : m_rep(p_profile.m_rep->Copy()) {}
+  /// Destructor
+  ~MixedStrategyProfile() = default;
+
+  MixedStrategyProfile &operator=(const MixedStrategyProfile &);
+  MixedStrategyProfile &operator=(const Vector<T> &v)
+  {
+    InvalidateCache();
+    m_rep->SetProbVector(v);
+    return *this;
+  }
+  MixedStrategyProfile &operator=(const T &c)
+  {
+    InvalidateCache();
+    m_rep->SetProbConstant(c);
+    return *this;
+  }
+  //@}
+
+  /// @name Operator overloading
+  //@{
+  /// Test for the equality of two profiles
+  bool operator==(const MixedStrategyProfile &p_profile) const
+  {
+    return (m_rep->GetSupport() == p_profile.m_rep->GetSupport() &&
+            m_rep->GetProbVector() == p_profile.m_rep->GetProbVector());
+  }
+
+  /// Vector-style access to probabilities
+  const T &operator[](int i) const
+  {
+    CheckVersion();
+    return (*m_rep)[i];
+  }
+  /// Vector-style access to probabilities
+  T &operator[](int i)
+  {
+    CheckVersion();
+    InvalidateCache();
+    return (*m_rep)[i];
+  }
+
+  /// Returns the probability the strategy is played
+  const T &operator[](const GameStrategy &p_strategy) const
+  {
+    CheckVersion();
+    return (*m_rep)[p_strategy];
+  }
+  /// Returns the probability the strategy is played
+  T &operator[](const GameStrategy &p_strategy)
+  {
+    CheckVersion();
+    InvalidateCache();
+    return (*m_rep)[p_strategy];
+  }
+
+  /// Returns the mixed strategy for the player
+  Vector<T> GetStrategy(const GamePlayer &p_player) const;
+
+  const Vector<T> &GetProbVector() const
+  {
+    CheckVersion();
+    return m_rep->GetProbVector();
+  }
+  //@}
+
+  /// @name General data access
+  //@{
+  /// Returns the game on which the profile is defined
+  Game GetGame() const { return m_rep->GetSupport().GetGame(); }
+  /// Returns the support on which the profile is defined
+  const StrategySupportProfile &GetSupport() const
+  {
+    CheckVersion();
+    return m_rep->GetSupport();
+  }
+  /// Returns whether the profile has been invalidated by a subsequent revision to the game
+  bool HasOutdatedGameVersion() const
+  {
+    return m_rep->GetGameVersion() != m_rep->GetSupport().GetGame()->GetVersion();
+  }
+
+  /// Sets all strategies for each player to equal probabilities
+  void SetCentroid()
+  {
+    CheckVersion();
+    InvalidateCache();
+    m_rep->SetCentroid();
+  }
+
+  /// Create a new mixed strategy profile where strategies are played
+  /// in the same proportions, but with probabilities for each player
+  /// summing to one.
+  MixedStrategyProfile Normalize() const
+  {
+    CheckVersion();
+    return MixedStrategyProfile<T>(m_rep->Normalize());
+  }
+
+  /// Returns the total number of strategies in the profile
+  size_t MixedProfileLength() const { return m_rep->GetProbVector().size(); }
+
+  /// Converts the profile to one on the full support of the game
+  MixedStrategyProfile ToFullSupport() const;
+  //@}
+
+  /// @name Computation of interesting quantities
+  //@{
+
+  /// Computes the payoff of the profile to player 'pl'
+  T GetPayoff(int pl) const
+  {
+    CheckVersion();
+    return m_rep->GetPayoff(GetGame()->GetPlayer(pl));
+    ;
+  }
+
+  /// Computes the payoff of the profile to the player
+  T GetPayoff(const GamePlayer &p_player) const
+  {
+    CheckVersion();
+    return GetPayoff(p_player->GetNumber());
+  }
+
+  /// \brief Computes the derivative of the player's payoff
+  ///
+  /// Computes the derivative of the payoff to the player with respect
+  /// to the probability the strategy is played
+  T GetPayoffDeriv(int pl, const GameStrategy &s) const
+  {
+    CheckVersion();
+    return m_rep->GetPayoffDeriv(pl, s);
+  }
+
+  /// \brief Computes the second derivative of the player's payoff
+  ///
+  /// Computes the second derivative of the payoff to the player,
+  /// with respect to the probabilities with which the strategies are played
+  T GetPayoffDeriv(int pl, const GameStrategy &s1, const GameStrategy &s2) const
+  {
+    CheckVersion();
+    return m_rep->GetPayoffDeriv(pl, s1, s2);
+  }
+
+  /// Computes the payoff to playing the pure strategy against the profile
+  T GetPayoff(const GameStrategy &p_strategy) const
+  {
+    CheckVersion();
+    return GetPayoffDeriv(p_strategy->GetPlayer()->GetNumber(), p_strategy);
+  }
+
+  /// @brief Computes the payoffs of a player's strategies and their derivatives
+  /// @details For each strategy of \p p_player in the support, computes the payoff to playing
+  ///          it against the profile, and the derivatives of that payoff with respect to the
+  ///          probabilities of the strategies of the other players.
+  /// @param[in] p_player  The player whose strategies are evaluated
+  /// @param[out] p_values  Resized to one entry per strategy of the player in the support
+  /// @param[out] p_derivs  Resized to one row per strategy of the player in the support and one
+  ///                       column per position in the profile; columns of the player's own
+  ///                       strategies are zero
+  void GetPayoffDerivBlock(const GamePlayer &p_player, Vector<T> &p_values,
+                           Matrix<T> &p_derivs) const
+  {
+    CheckVersion();
+    m_rep->GetPayoffDerivBlock(p_player->GetNumber(), p_values, p_derivs);
+  }
+
+  /// @brief Computes the regret to playing \p p_strategy
+  /// @details Computes the regret to the player of playing strategy \p p_strategy
+  ///          against the profile.  The regret is defined as the difference
+  ///          between the best-response payoff and the payoff to playing
+  ///          \p p_strategy.
+  /// @param[in] p_strategy  The strategy to compute the regret for.
+  /// @sa GetRegret(const GamePlayer &) const;
+  ///     GetMaxRegret() const
+  T GetRegret(const GameStrategy &p_strategy) const;
+
+  /// @brief Computes the regret for player \p p_player
+  /// @details Computes the regret to the player of playing their mixed strategy
+  ///          as specified in the profile.  The regret is defined as the difference
+  ///          between the player's best-response payoff and the payoff to playing
+  ///          their specified mixed strategy.
+  /// @param[in] p_player  The player to compute the regret for.
+  /// @sa GetRegret(const GameStrategy &) const;
+  ///     GetMaxRegret() const
+  T GetRegret(const GamePlayer &p_player) const;
+
+  /// @brief Computes the maximum regret to any player in the profile
+  /// @details Computes the maximum of the regrets of the players in the profile.
+  /// @sa GetRegret(const GamePlayer &) const;
+  ///     GetRegret(const GameStrategy &) const
+  T GetMaxRegret() const;
+
+  /// @brief Computes the Lyapunov value of the profile
+  /// @details Computes the Lyapunov value of the profile.  This is a nonnegative
+  ///          value which is zero exactly at Nash equilibria.  This version
+  ///          implements a positive penalty for profiles which are not on the
+  ///          simplotope (useful for penalty-function minimization methods).
+  T GetLiapValue() const;
+  //@}
+};
+
+/// @brief Generate a mixed strategy profile by drawing from the uniform distribution over the
+///        set of mixed strategy profiles
+template <class Generator>
+[[nodiscard]] MixedStrategyProfile<double> NewRandomStrategyProfile(const Game &p_game,
+                                                                    Generator &generator)
+{
+  auto profile = p_game->NewMixedStrategyProfile(0.0);
+  std::exponential_distribution<> dist(1); // NOLINT(misc-const-correctness)
+  for (auto player : p_game->GetPlayers()) {
+    for (auto strategy : player->GetStrategies()) {
+      profile[strategy] = dist(generator);
+    }
+  }
+  return profile.Normalize();
+}
+
+/// @brief As NewRandomStrategyProfile(p_game, generator), using an unseeded-by-the-caller
+///        generator -- for callers who don't need the sequence of profiles drawn to be
+///        reproducible. Pass an explicit generator instead if reproducibility matters.
+[[nodiscard]] inline MixedStrategyProfile<double> NewRandomStrategyProfile(const Game &p_game)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomStrategyProfile(p_game, generator);
+}
+
+/// @brief Generate `count` mixed strategy profiles, each as
+///        NewRandomStrategyProfile(p_game, generator).
+template <class Generator>
+[[nodiscard]] std::vector<MixedStrategyProfile<double>>
+NewRandomStrategyProfiles(const Game &p_game, int count, Generator &generator)
+{
+  std::vector<MixedStrategyProfile<double>> profiles;
+  profiles.reserve(count);
+  for (int i = 0; i < count; i++) {
+    profiles.push_back(NewRandomStrategyProfile(p_game, generator));
+  }
+  return profiles;
+}
+
+/// @brief As NewRandomStrategyProfiles(p_game, count, generator), using an
+///        unseeded-by-the-caller generator -- see NewRandomStrategyProfile(p_game) above.
+[[nodiscard]] inline std::vector<MixedStrategyProfile<double>>
+NewRandomStrategyProfiles(const Game &p_game, int count)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomStrategyProfiles(p_game, count, generator);
+}
+
+/// @brief Generate a mixed strategy profile by drawing from the uniform distribution over the
+///        set of mixed strategy profiles, restricted to rational probabilities with denominator
+///        `denom`.
+template <class Generator>
+[[nodiscard]] MixedStrategyProfile<Rational>
+NewRandomStrategyProfile(const Game &p_game, int denom, Generator &generator)
+{
+  auto profile = p_game->NewMixedStrategyProfile(Rational(0));
+  for (auto player : p_game->GetPlayers()) {
+    const std::list<Rational> dist =
+        UniformOnSimplex(denom, player->GetStrategies().size(), generator);
+    auto prob = dist.cbegin();
+    for (auto strategy : player->GetStrategies()) {
+      profile[strategy] = *prob;
+      ++prob;
+    }
+  }
+  return profile;
+}
+
+/// @brief As NewRandomStrategyProfile(p_game, denom, generator), using an
+///        unseeded-by-the-caller generator -- see NewRandomStrategyProfile(p_game) above.
+[[nodiscard]] inline MixedStrategyProfile<Rational> NewRandomStrategyProfile(const Game &p_game,
+                                                                             int denom)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomStrategyProfile(p_game, denom, generator);
+}
+
+/// @brief Generate `count` mixed strategy profiles, each as
+///        NewRandomStrategyProfile(p_game, denom, generator).
+template <class Generator>
+[[nodiscard]] std::vector<MixedStrategyProfile<Rational>>
+NewRandomStrategyProfiles(const Game &p_game, int count, int denom, Generator &generator)
+{
+  std::vector<MixedStrategyProfile<Rational>> profiles;
+  profiles.reserve(count);
+  for (int i = 0; i < count; i++) {
+    profiles.push_back(NewRandomStrategyProfile(p_game, denom, generator));
+  }
+  return profiles;
+}
+
+/// @brief As NewRandomStrategyProfiles(p_game, count, denom, generator), using an
+///        unseeded-by-the-caller generator -- see NewRandomStrategyProfile(p_game) above.
+[[nodiscard]] inline std::vector<MixedStrategyProfile<Rational>>
+NewRandomStrategyProfiles(const Game &p_game, int count, int denom)
+{
+  std::random_device rd;
+  std::default_random_engine generator(rd());
+  return NewRandomStrategyProfiles(p_game, count, denom, generator);
+}
+
+} // end namespace Gambit
+
+#endif // GAMBIT_GAMES_STRATMIXED_H

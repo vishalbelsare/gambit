@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/gui/gambit.cc
+// FILE: src/gui/app.cc
 // Implementation of main wxApp class
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,136 +20,232 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#include <fstream>
-
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
+#endif // WX_PRECOMP
+#include <wx/artprov.h>
+#include <wx/display.h>
+#include <wx/filename.h>
 #include <wx/image.h>
-#include <wx/splash.h>
 
-#include "gambit.h"
+#include "games.h"
 
 #include "app.h"
 #include "gameframe.h"
+#include "welcome.h"
 
-gbtApplication::gbtApplication(void)
-  : m_fileHistory(10)
-{ }
-
-bool gbtApplication::OnInit(void)
-{
 #include "bitmaps/gambitbig.xpm"
+
+namespace Gambit::GUI {
+
+static wxBitmap MakeScaledSplashBitmap(const wxBitmap &srcBmp, double fracOfShortSide)
+{
+  const wxPoint mouse = wxGetMousePosition();
+  const int dispIdx = wxDisplay::GetFromPoint(mouse);
+  wxDisplay disp(dispIdx == wxNOT_FOUND ? 0 : dispIdx);
+
+  wxRect geom = disp.GetGeometry(); // pixels in that display
+  const int shortSide = std::min(geom.width, geom.height);
+  const int targetMax = std::max(200, int(shortSide * fracOfShortSide));
+
+  const int w = srcBmp.GetWidth();
+  const int h = srcBmp.GetHeight();
+  const double s = double(targetMax) / double(std::max(w, h));
+
+  const int newW = std::max(1, int(std::lround(w * s)));
+  const int newH = std::max(1, int(std::lround(h * s)));
+
+  wxImage img = srcBmp.ConvertToImage();
+  img.Rescale(newW, newH, wxIMAGE_QUALITY_HIGH);
+
+  return wxBitmap(img);
+}
+
+wxBEGIN_EVENT_TABLE(Application, wxApp) EVT_TIMER(wxID_ANY, Application::OnSplashDismissTimer)
+    wxEND_EVENT_TABLE()
+
+        bool Application::OnInit()
+{
   wxConfigBase::Set(new wxConfig(_T("Gambit"), _T("Gambit")));
   m_fileHistory.Load(*wxConfigBase::Get());
   // Immediately saving this back forces the entries to be created at
   // the "top level" of the config file when using the wxFileConfig
   // implementation (which seems to still be buggy).
   // m_fileHistory.Save(config);
-  wxConfigBase::Get()->Read(_T("/General/CurrentDirectory"), &m_currentDir,
-			    _T(""));
-
-  wxBitmap bitmap(gambitbig_xpm);
-  /*wxSplashScreen *splash =*/
-    new wxSplashScreen(bitmap,
-		       wxSPLASH_CENTRE_ON_SCREEN | wxSPLASH_TIMEOUT,
-		       2000, NULL, -1, wxDefaultPosition, wxDefaultSize,
-		       wxSIMPLE_BORDER | wxSTAY_ON_TOP);
-  wxYield();
+  wxConfigBase::Get()->Read(_T("/General/CurrentDirectory"), &m_currentDir, _T(""));
 
   // Process command line arguments, if any.
-  for (int i = 1; i < wxApp::argc; i++) {
-    gbtAppLoadResult result = LoadFile(wxApp::argv[i]);
-    if (result == GBT_APP_OPEN_FAILED) {
-      wxMessageDialog dialog(0,
-			     wxT("Gambit could not open file '") + 
-			     wxString((const char *) argv[i], *wxConvCurrent) + 
-			     wxT("' for reading."), 
-			     wxT("Unable to open file"),
-			     wxOK | wxICON_ERROR);
-      dialog.ShowModal();
-    }
-    else if (result == GBT_APP_PARSE_FAILED) {
-      wxMessageDialog dialog(0,
-			     wxT("File '") +
-			     wxString((const char *) argv[i], *wxConvCurrent) +
-			     wxT("' is not in a format Gambit recognizes."),
-			     wxT("Unable to read file"),
-			     wxOK | wxICON_ERROR);
-      dialog.ShowModal();
-    }
+  for (int i = 1; i < argc; i++) {
+    LoadFile(argv[i], nullptr);
   }
 
-  if (m_documents.Length() == 0) {
-    // If we don't have any game files -- whether because none were
-    // specified on the command line, or because those specified couldn't
-    // be read -- create a default document.
-    Gambit::Game efg = Gambit::NewTree();
-    efg->NewPlayer()->SetLabel("Player 1");
-    efg->NewPlayer()->SetLabel("Player 2");
-    efg->SetTitle("Untitled Extensive Game");
-
-    gbtGameDocument *game = new gbtGameDocument(efg);
-    (void) new gbtGameFrame(0, game);
+  if (m_documents.empty()) {
+    auto *frame = new WelcomeFrame(nullptr);
+    frame->Show(true);
+    SetTopWindow(frame);
   }
-
+  else {
+    const wxBitmap bitmap(gambitbig_xpm);
+    m_splashTimer.Start();
+    m_splash = new wxSplashScreen(MakeScaledSplashBitmap(bitmap, 0.45),
+                                  wxSPLASH_CENTRE_ON_SCREEN | wxSPLASH_NO_TIMEOUT, 0, nullptr,
+                                  wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_SIMPLE);
+    m_splash->Show();
+    m_splash->Update();
+    this->CallAfter(&Application::DismissSplash);
+  }
   // Set up the help system.
   wxInitAllImageHandlers();
 
   return true;
 }
 
-gbtAppLoadResult gbtApplication::LoadFile(const wxString &p_filename)
-{    
-  std::ifstream infile((const char *) p_filename.mb_str());
-  if (!infile.good()) {
-    return GBT_APP_OPEN_FAILED;
-  }
-
-  gbtGameDocument *doc = new gbtGameDocument(Gambit::NewTree());
-  if (doc->LoadDocument(p_filename)) {
-    doc->SetFilename(p_filename);
-    m_fileHistory.AddFileToHistory(p_filename);
-    m_fileHistory.Save(*wxConfigBase::Get());
-    (void) new gbtGameFrame(0, doc);
-    return GBT_APP_FILE_OK;
-  }
-  else {
-    delete doc;
-  }
-
-  try {
-    Gambit::Game nfg = Gambit::ReadGame(infile);
-
-    m_fileHistory.AddFileToHistory(p_filename);
-    m_fileHistory.Save(*wxConfigBase::Get());
-    gbtGameDocument *doc = new gbtGameDocument(nfg);
-    doc->SetFilename(wxT(""));
-    (void) new gbtGameFrame(0, doc);
-    return GBT_APP_FILE_OK;
-  }
-  catch (Gambit::InvalidFileException) {
-    return GBT_APP_PARSE_FAILED;
-  }
-}
-
-void gbtApplication::SetCurrentDir(const wxString &p_dir)  
-{ 
-  m_currentDir = p_dir; 
-  wxConfigBase::Get()->Write(_T("/General/CurrentDirectory"), p_dir);
-}
-
-bool gbtApplication::AreDocumentsModified(void) const
+void Application::DismissSplash()
 {
-  for (int i = 1; i <= m_documents.Length(); i++) {
-    if (m_documents[i]->IsModified()) {
+  if (!m_splash) {
+    return;
+  }
+
+  const long minDisplay = 1000;
+  const long elapsed = m_splashTimer.Time();
+
+  if (elapsed < minDisplay) {
+    m_splashDismissTimer.SetOwner(this);
+    m_splashDismissTimer.StartOnce(minDisplay - elapsed);
+    return;
+  }
+
+  m_splash->Destroy();
+  m_splash = nullptr;
+}
+
+namespace {
+
+/// A simple single-button error notice, styled like GameFrame's CloseWarningDialog:
+/// an icon beside a bold headline, with supporting detail underneath.
+class FileErrorDialog final : public wxDialog {
+public:
+  FileErrorDialog(wxWindow *parent, const wxString &title, const wxString &headline,
+                  const wxString &detail)
+    : wxDialog(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize,
+               wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+  {
+    auto *topSizer = new wxBoxSizer(wxVERTICAL);
+
+    auto *contentSizer = new wxBoxSizer(wxHORIZONTAL);
+    contentSizer->Add(new wxStaticBitmap(this, wxID_ANY,
+                                         wxArtProvider::GetBitmap(wxART_ERROR, wxART_MESSAGE_BOX,
+                                                                  wxSize(32, 32))),
+                      0, wxALIGN_TOP | wxRIGHT, FromDIP(16));
+
+    auto *textSizer = new wxBoxSizer(wxVERTICAL);
+
+    auto *headlineText = new wxStaticText(this, wxID_ANY, headline);
+    auto font = headlineText->GetFont();
+    font.SetWeight(wxFONTWEIGHT_BOLD);
+    headlineText->SetFont(font);
+    headlineText->Wrap(FromDIP(400));
+
+    auto *detailText = new wxStaticText(this, wxID_ANY, detail);
+    detailText->Wrap(FromDIP(400));
+
+    textSizer->Add(headlineText, 0, wxBOTTOM, FromDIP(8));
+    textSizer->Add(detailText, 0);
+
+    contentSizer->Add(textSizer, 1, wxEXPAND);
+
+    topSizer->Add(contentSizer, 1, wxEXPAND | wxALL, FromDIP(20));
+
+    auto *buttonSizer = new wxBoxSizer(wxHORIZONTAL);
+    auto *okButton = new wxButton(this, wxID_OK, _("OK"));
+    buttonSizer->AddStretchSpacer();
+    buttonSizer->Add(okButton, 0);
+
+    topSizer->Add(buttonSizer, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(20));
+
+    SetSizerAndFit(topSizer);
+    SetMinSize(wxSize(FromDIP(420), -1));
+
+    SetEscapeId(wxID_OK);
+    SetAffirmativeId(wxID_OK);
+    okButton->SetDefault();
+    okButton->SetFocus();
+
+    CentreOnParent();
+  }
+};
+
+} // namespace
+
+AppLoadResult Application::LoadFile(const wxString &p_filename, wxWindow *p_parent)
+{
+  const auto [result, doc] = GameDocument::Load(p_filename);
+
+  switch (result) {
+  case GameDocument::LoadResult::OpenFailed:
+    if (!wxFileName::FileExists(p_filename) && ForgetRecentFile(p_filename)) {
+      FileErrorDialog(p_parent, _("File not found"), _("This file no longer exists."),
+                      p_filename + "\n\n" +
+                          _("It has been removed from the list of recent games."))
+          .ShowModal();
+    }
+    else {
+      FileErrorDialog(p_parent, _("Unable to open file"),
+                      _("Gambit could not open this file for reading."), p_filename)
+          .ShowModal();
+    }
+    return AppLoadResult::OpenFailed;
+
+  case GameDocument::LoadResult::ParseFailed:
+    FileErrorDialog(p_parent, _("Unable to read file"),
+                    _("File is not in a format Gambit recognizes."), p_filename)
+        .ShowModal();
+    return AppLoadResult::ParseFailed;
+
+  case GameDocument::LoadResult::UnsupportedRepresentation:
+    FileErrorDialog(p_parent, _("Unsupported game representation"),
+                    _("Action graph games are not currently supported by the "
+                      "graphical interface."),
+                    p_filename)
+        .ShowModal();
+    return AppLoadResult::UnsupportedRepresentation;
+
+  case GameDocument::LoadResult::Success:
+    m_fileHistory.AddFileToHistory(p_filename);
+    m_fileHistory.Save(*wxConfigBase::Get());
+    (void)new GameFrame(nullptr, doc);
+    return AppLoadResult::Success;
+  }
+}
+
+std::vector<wxString> Application::GetRecentFiles() const
+{
+  std::vector<wxString> files;
+  for (size_t i = 0; i < m_fileHistory.GetCount(); i++) {
+    files.push_back(m_fileHistory.GetHistoryFile(i));
+  }
+  return files;
+}
+
+bool Application::ForgetRecentFile(const wxString &p_filename)
+{
+  for (size_t i = 0; i < m_fileHistory.GetCount(); i++) {
+    if (m_fileHistory.GetHistoryFile(i) == p_filename) {
+      m_fileHistory.RemoveFileFromHistory(i);
+      m_fileHistory.Save(*wxConfigBase::Get());
       return true;
     }
   }
   return false;
 }
 
+void Application::SetCurrentDir(const wxString &p_dir)
+{
+  m_currentDir = p_dir;
+  wxConfigBase::Get()->Write(_T("/General/CurrentDirectory"), p_dir);
+}
 
-IMPLEMENT_APP(gbtApplication)
+} // namespace Gambit::GUI
 
+IMPLEMENT_APP(Gambit::GUI::Application)

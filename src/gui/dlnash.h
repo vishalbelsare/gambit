@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dlnash.h
 // Dialog for selecting algorithms to compute Nash equilibria
@@ -20,28 +20,30 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef DLNASH_H
-#define DLNASH_H
+#ifndef GAMBIT_GUI_DLNASH_H
+#define GAMBIT_GUI_DLNASH_H
 
 #include "gamedoc.h"
 
-class gbtNashChoiceDialog : public wxDialog {
-private:
-  gbtGameDocument *m_doc;
+namespace Gambit::GUI {
+class NashChoiceDialog final : public wxDialog {
+  std::shared_ptr<GameDocument> m_doc;
   wxChoice *m_countChoice, *m_methodChoice, *m_repChoice;
 
   // Event handlers
   void OnCount(wxCommandEvent &);
   void OnMethod(wxCommandEvent &);
+  void UpdateRepresentationChoice();
+
+  NashComputationSpec GetComputation() const;
 
 public:
-  gbtNashChoiceDialog(wxWindow *, gbtGameDocument *);
+  NashChoiceDialog(wxWindow *, const std::shared_ptr<GameDocument> &);
 
-  gbtAnalysisOutput *GetCommand(void) const;
+  std::shared_ptr<AnalysisOutput> GetCommand() const;
 
-  bool UseStrategic(void) const;
+  bool UseStrategic() const;
 };
+} // namespace Gambit::GUI
 
-
-#endif   // DLNFGNASH_H
-
+#endif // GAMBIT_GUI_DLNASH_H

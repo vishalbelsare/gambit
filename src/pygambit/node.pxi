@@ -1,0 +1,275 @@
+#
+# This file is part of Gambit
+# Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
+#
+# FILE: src/pygambit/node.pxi
+# Cython wrapper for nodes
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+#
+
+Branch = collections.namedtuple("Branch", ["node", "label"])
+Branch.__doc__ = """The action labeled `label`, taken at `node`. Not part of the
+public API; internal return type of the private `Node._prior_action`, pending a
+`Game`/`History`-based design. `node` is the node at which the action was taken
+(not the node it leads to), so ``branch.node.actions`` is always well-defined.
+"""
+
+
+@cython.cfunc
+def _decode_number(py_string: string) -> object:
+    """Internal: decode a number formatted by the C++ core as ``Decimal`` or
+    ``Rational``, matching whichever representation was used to specify it."""
+    if "." in py_string.decode("ascii"):
+        return decimal.Decimal(py_string.decode("ascii"))
+    else:
+        return Rational(py_string.decode("ascii"))
+
+
+@cython.cclass
+class NodeChildren:
+    """The set of nodes which are direct descendants of a node."""
+    parent = cython.declare(c_GameNode)
+
+    def __init__(self, *args, **kwargs) -> None:
+        raise ValueError("Cannot create NodeChildren outside a Game.")
+
+    @staticmethod
+    @cython.cfunc
+    def wrap(parent: c_GameNode) -> NodeChildren:
+        obj: NodeChildren = NodeChildren.__new__(NodeChildren)
+        obj.parent = parent
+        return obj
+
+    def __len__(self) -> int:
+        return self.parent.deref().GetChildren().size()
+
+    def __repr__(self) -> str:
+        return f"NodeChildren(parent={Node.wrap(self.parent)})"
+
+    def __iter__(self) -> typing.Iterator[Node]:
+        for child in self.parent.deref().GetChildren():
+            yield Node.wrap(child)
+
+    def __getitem__(self, action: typing.Any) -> Node:
+        """Returns the successor node which is reached after the action labeled
+        `action` is played.
+
+        Raises
+        ------
+        KeyError
+            If no action with that label exists at the node's infoset, or if the
+            node is terminal.
+        ValueError
+            If `action` is an empty or all-whitespace string.
+        TypeError
+            If `action` is not a ``str``.
+
+        .. versionchanged:: 16.5.0
+            Previously indexing by string searched the labels of the child nodes,
+            rather than referring to actions.  This implements the more natural
+            interpretation that strings refer to action labels.
+
+        .. versionchanged:: 16.7.0
+            Integer indexing is no longer supported; index by the action's label, or
+            iterate.  A label matching no action now raises ``KeyError``.
+
+        .. versionchanged:: 17.0.0
+            No longer indexable by an ``Action`` object, following its removal.
+        """
+        if isinstance(action, str):
+            if not action.strip():
+                raise ValueError("Action label cannot be empty or all whitespace")
+            if self.parent.deref().GetInfoset() == cython.cast(c_GameInfoset, NULL):
+                raise KeyError(f"No action with label '{action}' at node")
+            for act in self.parent.deref().GetInfoset().deref().GetActions():
+                if act.deref().GetLabel().decode("utf-8") == cython.cast(str, action):
+                    return Node.wrap(self.parent.deref().GetChild(act))
+            raise KeyError(f"No action with label '{action}' at node")
+        if isinstance(action, int):
+            raise TypeError(
+                "node children cannot be indexed by position; index by the action's "
+                "label, or iterate. (Integer indexing was removed in 16.7.0.)"
+            )
+        raise TypeError(f"Index must be a str label, not {action.__class__.__name__}")
+
+
+@cython.cclass
+class Node:
+    """A node in a ``Game``."""
+    node = cython.declare(c_GameNode)
+
+    def __init__(self, *args, **kwargs) -> None:
+        raise ValueError("Cannot create a Node outside a Game.")
+
+    @staticmethod
+    @cython.cfunc
+    def wrap(node: c_GameNode) -> Node:
+        obj: Node = Node.__new__(Node)
+        obj.node = node
+        return obj
+
+    def __repr__(self) -> str:
+        if self._label:
+            return f"Node(game={self._game()}, label='{self._label}')"
+        path = []
+        node = self
+        while node._parent():
+            path.append(
+                cython.cast(Node, node).node.deref().GetPriorAction().deref().GetNumber() - 1
+            )
+            node = node._parent()
+        return f"Node(game={self._game()}, path={path})"
+
+    def __eq__(self, other: typing.Any) -> bool:
+        return (
+            isinstance(other, Node) and
+            self.node.deref() == cython.cast(Node, other).node.deref()
+        )
+
+    def __hash__(self) -> long:
+        return cython.cast(long, self.node.deref())
+
+    def _is_successor_of(self, node: Node) -> bool:
+        """Whether this node is a successor of `node`. Not part of the public
+        API, pending a `Game`/`History`-based design.
+        """
+        return self.node.deref().IsSuccessorOf((<Node>node).node)
+
+    @property
+    def _label(self) -> str:
+        """The text label associated with the node. Not part of the public API,
+        pending a `Game`/`Selector`-based design.
+        """
+        return self.node.deref().GetLabel().decode("utf-8")
+
+    @_label.setter
+    def _label(self, value: str) -> None:
+        self.node.deref().SetLabel(value.encode("utf-8"))
+
+    def _children(self) -> NodeChildren:
+        """The set of children of this node. Not part of the public API; the public
+        equivalent is a `Selector`'s `.path(..., ...)` wildcard step, e.g.
+        `game.get_histories(H.path(*history.actions, ...))`.
+        """
+        return NodeChildren.wrap(self.node)
+
+    def _game(self) -> Game:
+        """The `Game` to which the node belongs. Not part of the public API; a
+        `Node` is otherwise only obtained already scoped to a particular `Game`.
+        """
+        return Game._wrap(self.node.deref().GetGame())
+
+    @cython.cfunc
+    def _infoset_handle(self) -> c_GameInfoset:
+        """The node's current information set or event, as a raw handle -- null if
+        the node is currently terminal. Not part of the public API; the information
+        set/event a node belongs to is otherwise only exposed piecemeal, via
+        `members`/`actions` and the `Game`/`Selector`-based resolvers.
+        """
+        return self.node.deref().GetInfoset()
+
+    @property
+    def members(self) -> list[Node]:
+        """The nodes which are members of the information set or event to which
+        this node currently belongs -- whichever applies.
+
+        .. versionadded:: 17.0.0
+
+        Raises
+        ------
+        AttributeError
+            If this node currently belongs to no information set or event (a terminal
+            node).
+        """
+        resolved: c_GameInfoset = self._infoset_handle()
+        if resolved == cython.cast(c_GameInfoset, NULL):
+            raise AttributeError("node currently belongs to no information set or event")
+        return [Node.wrap(member) for member in resolved.deref().GetMembers()]
+
+    @property
+    def actions(self) -> list[str]:
+        """The labels of the actions available at the node's current information set
+        or event, whichever applies.
+
+        .. versionadded:: 17.0.0
+
+        Raises
+        ------
+        AttributeError
+            If this node currently belongs to no information set or event (a
+            terminal node).
+        """
+        resolved: c_GameInfoset = self._infoset_handle()
+        if resolved == cython.cast(c_GameInfoset, NULL):
+            raise AttributeError("node currently belongs to no information set or event")
+        return [a.deref().GetLabel().decode("utf-8") for a in resolved.deref().GetActions()]
+
+    @property
+    def player(self) -> str | None:
+        """The label of the player associated with this node: the one who makes the
+        decision, if this is a personal node, or the chance player, if this is an
+        event.
+
+        `None` for a terminal node, which has no player.
+
+        .. versionchanged:: 17.0.0
+            Returns the player's label (or `None`) directly, rather than a lazy,
+            node-anchored view.
+        """
+        player: c_GamePlayer = self.node.deref().GetPlayer()
+        if not (player != cython.cast(c_GamePlayer, NULL)):
+            return None
+        return player.deref().GetLabel().decode("utf-8")
+
+    def _parent(self) -> Node | None:
+        """The parent of this node, or None if this is the root node. Not part
+        of the public API, pending a `Game`/`History`-based design.
+        """
+        if self.node.deref().GetParent() != cython.cast(c_GameNode, NULL):
+            return Node.wrap(self.node.deref().GetParent())
+        return None
+
+    def _prior_action(self) -> Branch | None:
+        """The branch -- the parent node and the label of the action taken from it --
+        which leads to this node, or None if this is the root node. Not part of the
+        public API, pending a `Game`/`History`-based design.
+        """
+        prior: c_GameAction = self.node.deref().GetPriorAction()
+        if prior != cython.cast(c_GameAction, NULL):
+            return Branch(self._parent(), prior.deref().GetLabel().decode("utf-8"))
+        return None
+
+    @cython.cfunc
+    def _is_terminal(self) -> cython.bint:
+        """Whether this is a terminal node of the game. Not part of the public
+        API; a node is terminal exactly when `Game.get_actions` is empty for it.
+        """
+        return self.node.deref().IsTerminal()
+
+    @cython.cfunc
+    def _is_strategy_reachable(self) -> cython.bint:
+        """Whether this node is reachable by any pure strategy profile. Not part
+        of the public API; the public equivalent is `Game.get_strategy_unreachable`.
+        """
+        return self.node.deref().IsStrategyReachable()
+
+    @cython.cfunc
+    def _plays(self) -> list:
+        """The terminal nodes consistent with this node. Not part of the public
+        API; the public equivalent is a `Selector`'s `.plays` step, e.g.
+        `game.get_histories(H.path(...).plays)`.
+        """
+        return [Node.wrap(n) for n in self.node.deref().GetGame().deref().GetPlays(self.node)]

@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/efglayout.h
 // Interface to tree layout representation
@@ -20,207 +20,182 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef EFGLAYOUT_H
-#define EFGLAYOUT_H
+#ifndef GAMBIT_GUI_EFGLAYOUT_H
+#define GAMBIT_GUI_EFGLAYOUT_H
 
-#include "gambit.h"
-#include "style.h"
 #include "gamedoc.h"
 
-class gbtNodeEntry {
-private:
-  Gambit::GameNode m_node;        // the corresponding node in the game
-  gbtNodeEntry *m_parent; // parent node
-  int m_x, m_y;        // Cartesian coordinates of node
-  gbtNodeEntry *m_nextMember;  // entry of next information set member 
-  bool m_inSupport;    // true if node reachable in current support
-  int m_size;         // horizontal size of the node
-  mutable wxRect m_outcomeRect;
-  mutable Gambit::Array<wxRect> m_payoffRect;
-  mutable wxRect m_branchAboveRect, m_branchBelowRect;
-  int m_token;        // token to draw for node
-  wxColour m_color;   // color of node
+#include "games/layout.h"
 
-  int m_branchStyle;  // lines or fork-tine
-  int m_branchLabel;  // horizontal or rotated
-  int m_branchLength; // length of branch (exclusive of tine, if present)
+namespace Gambit::GUI {
 
-  int m_level;        // depth of the node in tree
-  int m_sublevel;     // # of the infoset line on this level
-  double m_actionProb;  // probability incoming action is taken
+/// All of a rendered node's screen coordinates in one place: its position
+/// (set by the layout pass -- TreeLayout::ComputeNodeDepths/Layout() -- not
+/// by ComputeGeometry() below), its own token (the shape drawn there -- a
+/// circle, box, diamond, dot, or horizontal line, per style), the outcome
+/// label (or "no outcome" hint), one payoff cell per player (1-indexed,
+/// matching player numbers), and the two incoming-branch labels. Everything
+/// but position is computed once, up front, by TreeLayout::ComputeGeometry()
+/// -- not as a side effect of painting -- so that hit-testing is always
+/// valid without requiring a prior paint event.
+struct NodeGeometry {
+  wxPoint position;
+  wxRect token;
+  wxRect outcome;
+  Array<wxRect> payoffs;
+  wxRect branchAbove, branchBelow;
+};
+
+class NodeEntry {
+  friend class TreeLayout;
+  GameNode m_node;                     // the corresponding node in the game
+  std::shared_ptr<NodeEntry> m_parent; // parent node
+  NodeGeometry m_geometry;
+
+  int m_level{0};         // depth of the node in tree
+  int m_sublevel{0};      // # of the infoset line on this level
+  double m_actionProb{0}; // probability incoming action is taken
 
   wxString m_nodeAboveLabel, m_nodeBelowLabel;
   wxString m_branchAboveLabel, m_branchBelowLabel;
 
-  wxFont m_nodeAboveFont, m_nodeBelowFont;
-  wxFont m_branchAboveFont, m_branchBelowFont;
-
-  const gbtStyle *m_style;
-
 public:
-  gbtNodeEntry(Gambit::GameNode p_parent);
+  explicit NodeEntry(const GameNode &p_node) : m_node(p_node) {}
+  GameNode GetNode() const { return m_node; }
 
-  Gambit::GameNode GetNode(void) const { return m_node; }
+  std::shared_ptr<NodeEntry> GetParent() const { return m_parent; }
+  void SetParent(const std::shared_ptr<NodeEntry> &p_parent) { m_parent = p_parent; }
 
-  gbtNodeEntry *GetParent(void) const { return m_parent; }
-  void SetParent(gbtNodeEntry *p_parent) { m_parent = p_parent; }
+  int GetX() const { return m_geometry.position.x; }
+  void SetX(int p_x) { m_geometry.position.x = p_x; }
+  int GetY() const { return m_geometry.position.y; }
+  void SetY(int p_y) { m_geometry.position.y = p_y; }
 
-  int X(void) const { return m_x; }
-  void SetX(int p_x) { m_x = p_x; }
-  int Y(void) const { return m_y; }
-  void SetY(int p_y) { m_y = p_y; }
+  int GetChildNumber() const
+  {
+    return (m_node->GetParent()) ? m_node->GetPriorAction()->GetNumber() : 0;
+  }
 
-  gbtNodeEntry *GetNextMember(void) const { return m_nextMember; }
-  void SetNextMember(gbtNodeEntry *p_member) { m_nextMember = p_member; }
+  int GetLevel() const { return m_level; }
+  int GetSublevel() const { return m_sublevel; }
 
-  bool InSupport(void) const { return m_inSupport; }
-  void SetInSupport(bool p_inSupport) { m_inSupport = p_inSupport; }
+  const wxString &GetNodeAboveLabel() const { return m_nodeAboveLabel; }
+  void SetNodeAboveLabel(const wxString &p_label) { m_nodeAboveLabel = p_label; }
 
-  int GetChildNumber(void) const; 
+  const wxString &GetNodeBelowLabel() const { return m_nodeBelowLabel; }
+  void SetNodeBelowLabel(const wxString &p_label) { m_nodeBelowLabel = p_label; }
 
-  const wxColour &GetColor(void) const { return m_color; }
-  void SetColor(const wxColour &p_color) { m_color = p_color; }
+  const wxString &GetBranchAboveLabel() const { return m_branchAboveLabel; }
+  void SetBranchAboveLabel(const wxString &p_label) { m_branchAboveLabel = p_label; }
 
-  int GetSize(void) const { return m_size; }
-  void SetSize(int p_size) { m_size = p_size; }
+  const wxString &GetBranchBelowLabel() const { return m_branchBelowLabel; }
+  void SetBranchBelowLabel(const wxString &p_label) { m_branchBelowLabel = p_label; }
 
-  int GetToken(void) const { return m_token; }
-  void SetToken(int p_token) { m_token = p_token; }
-
-  int GetBranchStyle(void) const { return m_branchStyle; }
-  void SetBranchStyle(int p_style) { m_branchStyle = p_style; }
-
-  int GetBranchLabelStyle(void) const { return m_branchLabel; }
-  void SetBranchLabelStyle(int p_style) { m_branchLabel = p_style; }
-
-  int GetBranchLength(void) const { return m_branchLength; }
-  void SetBranchLength(int p_length) { m_branchLength = p_length; }
-
-  int GetLevel(void) const { return m_level; }
-  void SetLevel(int p_level) { m_level = p_level; }
-
-  int GetSublevel(void) const { return m_sublevel; }
-  void SetSublevel(int p_sublevel) { m_sublevel = p_sublevel; }
-
-  const wxString &GetNodeAboveLabel(void) const { return m_nodeAboveLabel; }
-  void SetNodeAboveLabel(const wxString &p_label)
-    { m_nodeAboveLabel = p_label; }
-
-  const wxString &GetNodeBelowLabel(void) const { return m_nodeBelowLabel; }
-  void SetNodeBelowLabel(const wxString &p_label)
-    { m_nodeBelowLabel = p_label; }
-
-  const wxString &GetBranchAboveLabel(void) const 
-    { return m_branchAboveLabel; }
-  void SetBranchAboveLabel(const wxString &p_label)
-    { m_branchAboveLabel = p_label; }
-
-  const wxString &GetBranchBelowLabel(void) const 
-    { return m_branchBelowLabel; }
-  void SetBranchBelowLabel(const wxString &p_label)
-    { m_branchBelowLabel = p_label; }
-
-  const wxFont &GetNodeAboveFont(void) const { return m_nodeAboveFont; }
-  void SetNodeAboveFont(const wxFont &p_font) { m_nodeAboveFont = p_font; }
-
-  const wxFont &GetNodeBelowFont(void) const { return m_nodeBelowFont; }
-  void SetNodeBelowFont(const wxFont &p_font) { m_nodeBelowFont = p_font; }
-
-  const wxFont &GetBranchAboveFont(void) const { return m_branchAboveFont; }
-  void SetBranchAboveFont(const wxFont &p_font) { m_branchAboveFont = p_font; }
-
-  const wxFont &GetBranchBelowFont(void) const { return m_branchBelowFont; }
-  void SetBranchBelowFont(const wxFont &p_font) { m_branchBelowFont = p_font; }
-
-  const double &GetActionProb(void) const { return m_actionProb; }
+  const double &GetActionProb() const { return m_actionProb; }
   void SetActionProb(const double &p_prob) { m_actionProb = p_prob; }
 
-  void SetStyle(const gbtStyle *p_style) { m_style = p_style; }
+  bool NodeHitTest(const int p_x, const int p_y) const
+  {
+    return (m_geometry.token.Contains(p_x, p_y));
+  }
+  bool OutcomeHitTest(const int p_x, const int p_y) const
+  {
+    return (m_geometry.outcome.Contains(p_x, p_y));
+  }
+  bool BranchAboveHitTest(const int p_x, const int p_y) const
+  {
+    return (m_geometry.branchAbove.Contains(p_x, p_y));
+  }
+  bool BranchBelowHitTest(const int p_x, const int p_y) const
+  {
+    return (m_geometry.branchBelow.Contains(p_x, p_y));
+  }
 
-  bool NodeHitTest(int p_x, int p_y) const;
-#if wxCHECK_VERSION(2,7,0)
-  bool OutcomeHitTest(int p_x, int p_y) const
-  { return (m_outcomeRect.Contains(p_x, p_y)); }
-  bool BranchAboveHitTest(int p_x, int p_y) const
-  { return (m_branchAboveRect.Contains(p_x, p_y)); }
-  bool BranchBelowHitTest(int p_x, int p_y) const
-  { return (m_branchBelowRect.Contains(p_x, p_y)); }
-#else
-  bool OutcomeHitTest(int p_x, int p_y) const
-  { return (m_outcomeRect.Inside(p_x, p_y)); }
-  bool BranchAboveHitTest(int p_x, int p_y) const
-  { return (m_branchAboveRect.Inside(p_x, p_y)); }
-  bool BranchBelowHitTest(int p_x, int p_y) const
-  { return (m_branchBelowRect.Inside(p_x, p_y)); }
-#endif
-
-  const wxRect &GetOutcomeExtent(void) const { return m_outcomeRect; }
-  const wxRect &GetPayoffExtent(int pl) const { return m_payoffRect[pl]; }
-
-  void Draw(wxDC &, Gambit::GameNode selection, bool p_noHints) const;
-  void DrawIncomingBranch(wxDC &) const;
-  void DrawOutcome(wxDC &, bool p_noHints) const;
+  const wxRect &GetOutcomeExtent() const { return m_geometry.outcome; }
+  const wxRect &GetPayoffExtent(int pl) const { return m_geometry.payoffs[pl]; }
+  const wxRect &GetTokenExtent() const { return m_geometry.token; }
 };
 
-class gbtEfgDisplay;
+/// What was hit by a point query against the rendered tree, and which node it
+/// belongs to. BranchAbove/BranchBelow report the CHILD node whose incoming
+/// branch was hit (not its parent) -- callers wanting the parent (e.g. to
+/// select the node whose move is being edited) call node->GetParent().
+/// Payoff reports which player's cell (1-indexed) within the outcome region
+/// was hit; Outcome covers the rest of the outcome region (including the
+/// "no outcome" hint).
+enum class HitRegion { None, Node, Outcome, Payoff, BranchAbove, BranchBelow };
 
-class gbtTreeLayout : public gbtGameView {
-private:
-  /* gbtEfgDisplay *m_parent; */
-  Gambit::Array<gbtNodeEntry *> m_nodeList;
-  mutable int m_maxX, m_maxY, m_maxLevel;
-  int m_infosetSpacing;
+struct HitResult {
+  HitRegion region{HitRegion::None};
+  GameNode node;
+  int payoffPlayer{0}; // valid only when region == HitRegion::Payoff
+  explicit operator bool() const { return region != HitRegion::None; }
+};
 
-  const int c_leftMargin, c_topMargin;
+class TreeLayout final : public GameView {
+  std::list<std::shared_ptr<NodeEntry>> m_nodeList;
+  std::map<GameNode, std::shared_ptr<NodeEntry>> m_nodeMap;
 
-  gbtNodeEntry *GetEntry(Gambit::GameNode) const;
+  mutable int m_maxX{0}, m_maxY{0};
+  int m_infosetSpacing{40};
 
-  gbtNodeEntry *NextInfoset(gbtNodeEntry *);
-  void CheckInfosetEntry(gbtNodeEntry *);
+  const int c_leftMargin{20}, c_topMargin{40}, c_bottomMargin{25};
 
-  void BuildNodeList(Gambit::GameNode, const Gambit::BehaviorSupportProfile &, int);
+  std::shared_ptr<NodeEntry> ComputeNextInInfoset(const std::shared_ptr<NodeEntry> &) const;
 
-  int LayoutSubtree(Gambit::GameNode, const Gambit::BehaviorSupportProfile &, int &, int &, int &);
-  void FillInfosetTable(Gambit::GameNode, const Gambit::BehaviorSupportProfile &);
-  void UpdateTableInfosets(void);
-  void UpdateTableParents(void);
+  /// Creates the NodeEntry for p_node (and recursively, its descendants),
+  /// linking each to p_parentEntry (nullptr for the root).
+  void BuildNodeList(const GameNode &p_node, const std::shared_ptr<NodeEntry> &p_parentEntry);
 
-  wxString CreateNodeLabel(const gbtNodeEntry *, int) const;
-  wxString CreateBranchLabel(const gbtNodeEntry *, int) const;
+  /// Based on node levels and information set sublevels, compute the depth
+  /// (X coordinate) of all nodes. The actual placement strategy is the free
+  /// function ComputeLevelProportionalX in efglayout.cc; this just supplies
+  /// it with this instance's style/spacing parameters.
+  void ComputeNodeDepths(const Layout &) const;
+
+  /// Computes NodeGeometry (token/outcome/payoff/branch-label regions) for
+  /// every node, and grows m_maxX to account for outcome-label width, all
+  /// without painting anything.  Must run after GenerateLabels() (it measures
+  /// label text); relies on each entry's m_parent, set once by BuildNodeList.
+  void ComputeGeometry() const;
+  /// Computes the region occupied by the node's own token (its shape, per
+  /// style -- see GetTokenForNode in efglayout.cc), independent of any text
+  /// measurement, so unlike its siblings below this needs no wxDC.
+  void ComputeTokenGeometry(const std::shared_ptr<NodeEntry> &) const;
+  void ComputeBranchGeometry(wxDC &, const std::shared_ptr<NodeEntry> &) const;
+  void ComputeOutcomeGeometry(wxDC &, const std::shared_ptr<NodeEntry> &) const;
 
   void RenderSubtree(wxDC &dc, bool p_noHints) const;
 
-  // Overriding gbtGameView members
-  void OnUpdate(void) { }
+  // Overriding GameView members
+  void OnUpdate() override {}
+
+  void DrawNode(wxDC &, const std::shared_ptr<NodeEntry> &, bool p_noHints) const;
+  void DrawIncomingBranch(wxDC &, const std::shared_ptr<NodeEntry> &) const;
+  void DrawOutcome(wxDC &, const std::shared_ptr<NodeEntry> &, bool p_noHints) const;
+
+  void BuildNodeList(const Game &);
 
 public:
-  gbtTreeLayout(gbtEfgDisplay *p_parent, gbtGameDocument *p_doc);
-  virtual ~gbtTreeLayout() { }
+  explicit TreeLayout(const std::shared_ptr<GameDocument> &p_doc) : GameView(p_doc) {}
+  ~TreeLayout() override = default;
 
-  Gambit::GameNode PriorSameLevel(Gambit::GameNode) const;
-  Gambit::GameNode NextSameLevel(Gambit::GameNode) const;
+  void Layout(const Game &);
+  void GenerateLabels() const;
 
-  void BuildNodeList(const Gambit::BehaviorSupportProfile &);
-  void Layout(const Gambit::BehaviorSupportProfile &);
-  void GenerateLabels(void);
+  std::shared_ptr<NodeEntry> GetNodeEntry(const GameNode &p_node) const
+  {
+    return m_nodeMap.at(p_node);
+  }
 
-  // The following member functions are for temporary compatibility only
-  gbtNodeEntry *GetNodeEntry(Gambit::GameNode p_node) const
-    { return GetEntry(p_node); }
-  gbtNodeEntry *GetValidParent(Gambit::GameNode);
-  gbtNodeEntry *GetValidChild(Gambit::GameNode);
+  int MaxX() const { return m_maxX; }
+  int MaxY() const { return m_maxY; }
 
-  int MaxX(void) const { return m_maxX; }
-  int MaxY(void) const { return m_maxY; }
-
-  Gambit::GameNode NodeHitTest(int, int) const;
-  Gambit::GameNode OutcomeHitTest(int, int) const;
-  Gambit::GameNode BranchAboveHitTest(int, int) const;
-  Gambit::GameNode BranchBelowHitTest(int, int) const;
-  Gambit::GameNode InfosetHitTest(int, int) const;
+  GameNode NodeHitTest(int, int) const;
+  HitResult HitTest(int, int) const;
 
   void Render(wxDC &, bool p_noHints) const;
 };
+} // namespace Gambit::GUI
 
-#endif  // EFGLAYOUT_H
-
+#endif // GAMBIT_GUI_EFGLAYOUT_H

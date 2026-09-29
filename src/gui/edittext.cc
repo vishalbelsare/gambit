@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/edittext.cc
 // A widget that functions as an editable wxStaticText
@@ -23,27 +23,26 @@
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
+#endif // WX_PRECOMP
 
 #include "edittext.h"
 
+namespace Gambit::GUI {
 //=========================================================================
-//                    class gbtStaticTextButton
+//                    class StaticTextButton
 //=========================================================================
 
-BEGIN_EVENT_TABLE(gbtStaticTextButton, wxStaticText)
-  EVT_LEFT_DOWN(gbtStaticTextButton::OnLeftClick)
+BEGIN_EVENT_TABLE(StaticTextButton, wxStaticText)
+EVT_LEFT_DOWN(StaticTextButton::OnLeftClick)
 END_EVENT_TABLE()
 
-gbtStaticTextButton::gbtStaticTextButton(wxWindow *p_parent, int p_id,
-					 const wxString &p_label,
-					 const wxPoint &p_position,
-					 const wxSize &p_size,
-					 long p_style)
-  : wxStaticText(p_parent, wxID_ANY, p_label, p_position, p_size, p_style)
-{ }
+StaticTextButton::StaticTextButton(wxWindow *p_parent, wxWindowID p_id, const wxString &p_label,
+                                   const wxPoint &p_position, const wxSize &p_size, long p_style)
+  : wxStaticText(p_parent, p_id, p_label, p_position, p_size, p_style)
+{
+}
 
-void gbtStaticTextButton::OnLeftClick(wxMouseEvent &p_event)
+void StaticTextButton::OnLeftClick(wxMouseEvent &p_event)
 {
   wxCommandEvent event(wxEVT_COMMAND_BUTTON_CLICKED);
   event.SetId(GetId());
@@ -53,35 +52,35 @@ void gbtStaticTextButton::OnLeftClick(wxMouseEvent &p_event)
 }
 
 //=========================================================================
-//                       class gbtEditableText
+//                       class EditableText
 //=========================================================================
 
-gbtEditableText::gbtEditableText(wxWindow *p_parent, int p_id,
-				 const wxString &p_value,
-				 const wxPoint &p_position,
-				 const wxSize &p_size)
-  : wxPanel(p_parent, p_id, p_position, p_size)
+EditableLabelText::EditableLabelText(wxWindow *p_parent, int p_id, const wxString &p_value,
+                                     const wxPoint &p_position, const wxSize &p_size)
+  : wxPanel(p_parent, p_id, p_position, p_size), m_committedValue(p_value)
 {
-  m_staticText = new gbtStaticTextButton(this, wxID_ANY, p_value, 
-					 wxPoint(0, 0), p_size,
-					 wxALIGN_LEFT);
+  m_staticText =
+      new StaticTextButton(this, wxID_ANY, p_value, wxPoint(0, 0), p_size, wxALIGN_LEFT);
   Connect(m_staticText->GetId(), wxEVT_COMMAND_BUTTON_CLICKED,
-	  wxCommandEventHandler(gbtEditableText::OnClick));
+          wxCommandEventHandler(EditableLabelText::OnClick));
 
-  m_textCtrl = new wxTextCtrl(this, wxID_ANY, p_value, wxPoint(0, 0), 
-			      p_size, wxTE_PROCESS_ENTER);
+  m_textCtrl =
+      new LabelTextCtrl(this, wxID_ANY, p_value, wxPoint(0, 0), p_size, wxTE_PROCESS_ENTER);
   Connect(m_textCtrl->GetId(), wxEVT_COMMAND_TEXT_ENTER,
-	  wxCommandEventHandler(gbtEditableText::OnAccept));
-  
-  wxBoxSizer *topSizer = new wxBoxSizer(wxHORIZONTAL);
+          wxCommandEventHandler(EditableLabelText::OnAccept));
+
+  m_textCtrl->Bind(wxEVT_KILL_FOCUS, &EditableLabelText::OnTextKillFocus, this);
+  m_textCtrl->Bind(wxEVT_CHAR_HOOK, &EditableLabelText::OnTextCharHook, this);
+
+  auto *topSizer = new wxBoxSizer(wxHORIZONTAL);
   topSizer->Add(m_staticText, 1, wxALIGN_CENTER, 0);
   topSizer->Add(m_textCtrl, 1, wxEXPAND, 0);
   topSizer->Show(m_textCtrl, false);
   SetSizer(topSizer);
-  Layout();
+  wxWindowBase::Layout();
 }
 
-void gbtEditableText::BeginEdit(void)
+void EditableLabelText::BeginEdit()
 {
   m_textCtrl->SetValue(m_staticText->GetLabel());
   m_textCtrl->SetSelection(-1, -1);
@@ -91,10 +90,14 @@ void gbtEditableText::BeginEdit(void)
   m_textCtrl->SetFocus();
 }
 
-void gbtEditableText::EndEdit(bool p_accept)
+void EditableLabelText::EndEdit(bool p_accept)
 {
   if (p_accept) {
-    m_staticText->SetLabel(m_textCtrl->GetValue());
+    m_staticText->SetLabel(m_textCtrl->GetNormalizedValue());
+  }
+  else {
+    m_textCtrl->SetValue(m_committedValue);
+    m_staticText->SetLabel(m_committedValue);
   }
 
   GetSizer()->Show(m_textCtrl, false);
@@ -102,56 +105,95 @@ void gbtEditableText::EndEdit(bool p_accept)
   GetSizer()->Layout();
 }
 
-wxString gbtEditableText::GetValue(void) const
+void EditableLabelText::AcceptEdit()
 {
-  
+  if (!IsEditing() || m_endingEdit) {
+    return;
+  }
+
+  m_endingEdit = true;
+  EndEdit(true);
+
+  wxCommandEvent event(wxEVT_COMMAND_TEXT_ENTER);
+  event.SetId(GetId());
+  wxPostEvent(GetParent(), event);
+
+  m_endingEdit = false;
+}
+
+void EditableLabelText::CancelEdit()
+{
+  if (!IsEditing() || m_endingEdit) {
+    return;
+  }
+
+  m_endingEdit = true;
+  EndEdit(false);
+  m_endingEdit = false;
+}
+
+wxString EditableLabelText::GetValue() const
+{
+
   if (GetSizer()->IsShown(m_textCtrl)) {
-    return m_textCtrl->GetValue();
+    return m_textCtrl->GetNormalizedValue();
   }
   else {
     return m_staticText->GetLabel();
   }
 }
 
-void gbtEditableText::SetValue(const wxString &p_value)
+void EditableLabelText::SetValue(const wxString &p_value)
 {
+  m_committedValue = p_value;
   m_textCtrl->SetValue(p_value);
   m_staticText->SetLabel(p_value);
 }
 
-bool gbtEditableText::SetForegroundColour(const wxColour &p_color)
+bool EditableLabelText::SetForegroundColour(const wxColour &p_color)
 {
   m_staticText->SetForegroundColour(p_color);
   m_textCtrl->SetForegroundColour(p_color);
   return true;
 }
 
-bool gbtEditableText::SetBackgroundColour(const wxColour &p_color)
+bool EditableLabelText::SetBackgroundColour(const wxColour &p_color)
 {
   m_staticText->SetBackgroundColour(p_color);
   m_textCtrl->SetBackgroundColour(p_color);
   return true;
 }
 
-bool gbtEditableText::SetFont(const wxFont &p_font)
+bool EditableLabelText::SetFont(const wxFont &p_font)
 {
   m_staticText->SetFont(p_font);
   m_textCtrl->SetFont(p_font);
   return true;
 }
 
-void gbtEditableText::OnClick(wxCommandEvent &)
+void EditableLabelText::OnClick(wxCommandEvent &)
 {
   wxCommandEvent event(wxEVT_COMMAND_BUTTON_CLICKED);
   event.SetId(GetId());
   wxPostEvent(GetParent(), event);
 }
 
-void gbtEditableText::OnAccept(wxCommandEvent &)
+void EditableLabelText::OnAccept(wxCommandEvent &) { AcceptEdit(); }
+
+void EditableLabelText::OnTextKillFocus(wxFocusEvent &p_event)
 {
-  EndEdit(true);
-  wxCommandEvent event(wxEVT_COMMAND_TEXT_ENTER);
-  event.SetId(GetId());
-  wxPostEvent(GetParent(), event);
+  AcceptEdit();
+  p_event.Skip();
 }
 
+void EditableLabelText::OnTextCharHook(wxKeyEvent &p_event)
+{
+  if (p_event.GetKeyCode() == WXK_ESCAPE && IsEditing()) {
+    CancelEdit();
+    return;
+  }
+
+  p_event.Skip();
+}
+
+} // namespace Gambit::GUI

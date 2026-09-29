@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dleditnode.h
 // Dialog for viewing and editing properties of a node
@@ -20,24 +20,28 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef DLEDITNODE_H
-#define DLEDITNODE_H
+#ifndef GAMBIT_GUI_DLEDITNODE_H
+#define GAMBIT_GUI_DLEDITNODE_H
 
-class dialogEditNode : public wxDialog {
-private:
-  Gambit::GameNode m_node;
-  wxTextCtrl *m_nodeName;
+#include "editlabel.h"
+
+namespace Gambit::GUI {
+class EditNodeDialog final : public wxDialog {
+  GameNode m_node;
+  LabelTextCtrl *m_nodeLabel;
   wxChoice *m_outcome, *m_infoset;
-  Gambit::Array<Gambit::GameInfoset> m_infosetList;
+  Array<GameInfoset> m_infosetList;
+
+  void OnOK(wxCommandEvent &);
 
 public:
   // Lifecycle
-  dialogEditNode(wxWindow *p_parent, Gambit::GameNode p_node);
+  EditNodeDialog(wxWindow *p_parent, const GameNode &p_node);
 
   // Data access (only valid when ShowModal() returns with wxID_OK)
-  wxString GetNodeName(void) const { return m_nodeName->GetValue(); }
-  int GetOutcome(void) const { return m_outcome->GetSelection(); }
-  Gambit::GameInfoset GetInfoset(void) const;
+  wxString GetNodeLabel() const { return m_nodeLabel->GetValue(); }
+  int GetOutcome() const { return m_outcome->GetSelection(); }
+  GameInfoset GetInfoset() const;
 };
-
-#endif   // DLEDITNODE_H
+} // namespace Gambit::GUI
+#endif // GAMBIT_GUI_DLEDITNODE_H

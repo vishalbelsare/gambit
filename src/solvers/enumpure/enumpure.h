@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gambit/nash/enumpure.h
+// FILE: src/solvers/enumpure/enumpure.h
 // Enumerate pure-strategy equilibrium profiles of games
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,43 +20,80 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_NASH_ENUMPURE_H
-#define GAMBIT_NASH_ENUMPURE_H
+#ifndef GAMBIT_SOLVERS_ENUMPURE_ENUMPURE_H
+#define GAMBIT_SOLVERS_ENUMPURE_ENUMPURE_H
 
-#include "games/nash.h"
+#include "games/stratpure.h"
+#include "games/behavpure.h"
+#include "solvers/nash.h"
 
-namespace Gambit {
-namespace Nash {
+namespace Gambit::Nash {
+
+inline bool IsNash(const PureStrategyProfile &p_profile)
+{
+  for (const auto &player : p_profile->GetGame()->GetPlayers()) {
+    const Rational current = p_profile->GetPayoff(player);
+    for (auto strategy : player->GetStrategies()) {
+      if (p_profile->GetStrategyValue(strategy) > current) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// @brief The result of enumerating pure-strategy Nash equilibria of a game
+struct EnumPureStrategyResult {
+  std::list<MixedStrategyProfile<Rational>> equilibria;
+  bool success{true};
+};
 
 ///
 /// Enumerate pure-strategy Nash equilibria of a game.  By definition,
 /// pure-strategy equilibrium uses the strategic representation of a game.
-/// 
-class EnumPureStrategySolver : public StrategySolver<Rational> {
-public:
-   EnumPureStrategySolver(shared_ptr<StrategyProfileRenderer<Rational> > p_onEquilibrium = 0) 
-    : StrategySolver<Rational>(p_onEquilibrium) { }
-  virtual ~EnumPureStrategySolver()  { }
-
-  List<MixedStrategyProfile<Rational> > Solve(const Game &p_game) const;
-};
-
-inline List<MixedStrategyProfile<Rational> >
-EnumPureStrategySolver::Solve(const Game &p_game) const
+///
+inline EnumPureStrategyResult EnumPureStrategySolve(
+    const Game &p_game,
+    StrategyCallbackType<Rational> p_onEquilibrium = NullStrategyCallback<Rational>,
+    const CancelToken &p_cancel = CancelToken())
 {
   if (!p_game->IsPerfectRecall()) {
-    throw UndefinedException("Computing equilibria of games with imperfect recall is not supported.");
+    throw UndefinedException(
+        "Computing equilibria of games with imperfect recall is not supported.");
   }
-  List<MixedStrategyProfile<Rational> > solutions;
-  for (StrategyProfileIterator citer(p_game); !citer.AtEnd(); citer++) {
-    if ((*citer)->IsNash()) {
-      MixedStrategyProfile<Rational> profile = (*citer)->ToMixedStrategyProfile();
-      m_onEquilibrium->Render(profile);
-      solutions.Append(profile);
+  EnumPureStrategyResult result;
+  for (const auto &profile : StrategyContingencies(p_game)) {
+    p_cancel.Check();
+    if (IsNash(profile)) {
+      result.equilibria.push_back(profile->ToMixedStrategyProfile());
+      p_onEquilibrium(result.equilibria.back());
     }
   }
-  return solutions;
+  return result;
 }
+
+inline bool IsAgentNash(const PureBehaviorProfile &p_profile)
+{
+  for (const auto &player : p_profile.GetGame()->GetPlayers()) {
+    auto current = p_profile.GetPayoff<Rational>(player);
+    for (const auto &infoset : player->GetInfosets()) {
+      for (const auto &action : infoset->GetActions()) {
+        auto deviation = p_profile;
+        deviation.SetAction(action);
+        if (deviation.GetPayoff<Rational>(player) > current) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+/// @brief The result of enumerating pure-strategy agent Nash equilibria of a game
+struct EnumPureAgentResult {
+  std::list<MixedBehaviorProfile<Rational>> equilibria;
+  bool success{true};
+};
 
 ///
 /// Enumerate pure-strategy agent Nash equilibria of a game.  This uses
@@ -65,30 +102,21 @@ EnumPureStrategySolver::Solve(const Game &p_game) const
 /// set (rather than possible deviations by the same player at multiple
 /// information sets.
 ///
-class EnumPureAgentSolver : public BehavSolver<Rational> {
-public:
-  EnumPureAgentSolver(shared_ptr<StrategyProfileRenderer<Rational> > p_onEquilibrium = 0)
-    : BehavSolver<Rational>(p_onEquilibrium) { }
-  virtual ~EnumPureAgentSolver()  { }
-
-  List<MixedBehaviorProfile<Rational> > Solve(const BehaviorSupportProfile &) const;
-};
-
-inline List<MixedBehaviorProfile<Rational> > 
-EnumPureAgentSolver::Solve(const BehaviorSupportProfile &p_support) const
+inline EnumPureAgentResult
+EnumPureAgentSolve(const Game &p_game,
+                   BehaviorCallbackType<Rational> p_onEquilibrium = NullBehaviorCallback<Rational>)
 {
-  List<MixedBehaviorProfile<Rational> > solutions;
-  for (BehaviorProfileIterator citer(p_support); !citer.AtEnd(); citer++) {
-    if (citer->IsAgentNash()) {
-      MixedBehaviorProfile<Rational> profile = citer->ToMixedBehaviorProfile();
-      m_onEquilibrium->Render(profile);
-      solutions.Append(profile);
+  EnumPureAgentResult result;
+  const BehaviorSupportProfile support(p_game);
+  for (auto citer : BehaviorContingencies(BehaviorSupportProfile(p_game))) {
+    if (IsAgentNash(citer)) {
+      result.equilibria.push_back(citer.ToMixedBehaviorProfile());
+      p_onEquilibrium(result.equilibria.back());
     }
   }
-  return solutions;
+  return result;
 }
 
-}  // end namespace Nash
-}  // end namespace Gambit
- 
-#endif  // GAMBIT_NASH_ENUMPURE_H
+} // end namespace Gambit::Nash
+
+#endif // GAMBIT_SOLVERS_ENUMPURE_ENUMPURE_H

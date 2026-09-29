@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/style.h
 // Class to store settings related to graphical interface styling
@@ -23,175 +23,191 @@
 #ifndef STYLE_H
 #define STYLE_H
 
-#include "gambit.h"
-#include "core/tinyxml.h"
+#include <functional>
 
-const int GBT_NODE_TOKEN_LINE = 0;
-const int GBT_NODE_TOKEN_BOX = 1;
-const int GBT_NODE_TOKEN_CIRCLE = 2;
-const int GBT_NODE_TOKEN_DIAMOND = 3;
-const int GBT_NODE_TOKEN_DOT = 4;
-
-const int GBT_BRANCH_STYLE_LINE = 0;
-const int GBT_BRANCH_STYLE_FORKTINE = 1;
-
-const int GBT_BRANCH_LABEL_HORIZONTAL = 0;
-const int GBT_BRANCH_LABEL_ROTATED = 1;
-
-const int GBT_INFOSET_JOIN_LINES = 0;
-const int GBT_INFOSET_JOIN_CIRCLES = 1;
-
-const int GBT_INFOSET_CONNECT_NONE = 0;
-const int GBT_INFOSET_CONNECT_SAMELEVEL = 1;
-const int GBT_INFOSET_CONNECT_ALL = 2;
-
-const int GBT_NODE_LABEL_NOTHING = 0;
-const int GBT_NODE_LABEL_LABEL = 1;
-const int GBT_NODE_LABEL_PLAYER = 2;
-const int GBT_NODE_LABEL_ISETLABEL = 3;
-const int GBT_NODE_LABEL_ISETID = 4;
-const int GBT_NODE_LABEL_REALIZPROB = 5;
-const int GBT_NODE_LABEL_BELIEFPROB = 6;
-const int GBT_NODE_LABEL_VALUE = 7;
-
-const int GBT_BRANCH_LABEL_NOTHING = 0;
-const int GBT_BRANCH_LABEL_LABEL = 1;
-const int GBT_BRANCH_LABEL_PROBS = 2;
-const int GBT_BRANCH_LABEL_VALUE = 3;
+#include "games/game.h"
+#include "games/workspace.h"
 
 class wxFont;
 
-class gbtStyle {
-private:
+namespace Gambit::GUI {
+
+// Forward-declared rather than included: gamedoc.h includes this header, so
+// including gamedoc.h here would be circular. Only a reference is needed at
+// this point; the label-generator methods that use it are implemented in
+// style.cc, which can include gamedoc.h freely.
+class AnalysisWorkspace;
+
+/// A function that computes a node's (or a branch's) label text. Callers
+/// (TreeLayout) don't need to know how many label styles exist or what each
+/// one means -- see TreeRenderConfig::GetNodeLabelGenerator/
+/// GetBranchLabelGenerator, which translate a style enum into one of these.
+using LabelGenerator = std::function<wxString(const GameNode &)>;
+
+enum NodeTokenStyle {
+  GBT_NODE_TOKEN_LINE,
+  GBT_NODE_TOKEN_BOX,
+  GBT_NODE_TOKEN_CIRCLE,
+  GBT_NODE_TOKEN_DIAMOND,
+  GBT_NODE_TOKEN_DOT
+};
+
+enum BranchLineStyle { GBT_BRANCH_STYLE_LINE, GBT_BRANCH_STYLE_FORKTINE };
+
+enum BranchLabelOrientationStyle {
+  GBT_BRANCH_LABEL_ORIENT_HORIZONTAL,
+  GBT_BRANCH_LABEL_ORIENT_ROTATED
+};
+
+enum InfosetJoinStyle { GBT_INFOSET_JOIN_LINES, GBT_INFOSET_JOIN_CIRCLES };
+
+enum InfosetConnectStyle {
+  GBT_INFOSET_CONNECT_NONE,
+  GBT_INFOSET_CONNECT_SAMELEVEL,
+  GBT_INFOSET_CONNECT_ALL
+};
+
+enum NodeLabelStyle {
+  GBT_NODE_LABEL_NOTHING,
+  GBT_NODE_LABEL_LABEL,
+  GBT_NODE_LABEL_PLAYER,
+  GBT_NODE_LABEL_ISETLABEL,
+  GBT_NODE_LABEL_ISETID,
+  GBT_NODE_LABEL_REALIZPROB,
+  GBT_NODE_LABEL_BELIEFPROB,
+  GBT_NODE_LABEL_VALUE
+};
+
+enum BranchLabelStyle {
+  GBT_BRANCH_LABEL_NOTHING,
+  GBT_BRANCH_LABEL_LABEL,
+  GBT_BRANCH_LABEL_PROBS,
+  GBT_BRANCH_LABEL_VALUE
+};
+
+/// Options for automatic rendering of game trees
+class TreeRenderConfig {
   // Node styling
-  int m_nodeSize, m_terminalSpacing;
-  int m_chanceToken, m_playerToken, m_terminalToken;
-  bool m_rootReachable;
+  int m_nodeSize{10}, m_terminalSpacing{50};
+  NodeTokenStyle m_chanceToken{GBT_NODE_TOKEN_DOT}, m_playerToken{GBT_NODE_TOKEN_DOT},
+      m_terminalToken{GBT_NODE_TOKEN_DOT};
 
   // Branch styling
-  int m_branchLength, m_tineLength;
-  int m_branchStyle, m_branchLabels;
+  int m_branchLength{60}, m_tineLength{20};
+  BranchLineStyle m_branchStyle{GBT_BRANCH_STYLE_FORKTINE};
+  BranchLabelOrientationStyle m_branchLabels{GBT_BRANCH_LABEL_ORIENT_HORIZONTAL};
 
   // Information set styling
-  int m_infosetConnect, m_infosetJoin;
+  InfosetJoinStyle m_infosetJoin{GBT_INFOSET_JOIN_CIRCLES};
 
   // Legend styling
-  int m_nodeAboveLabel, m_nodeBelowLabel;
-  int m_branchAboveLabel, m_branchBelowLabel;
+  NodeLabelStyle m_nodeAboveLabel{GBT_NODE_LABEL_LABEL}, m_nodeBelowLabel{GBT_NODE_LABEL_ISETID};
+  BranchLabelStyle m_branchAboveLabel{GBT_BRANCH_LABEL_LABEL},
+      m_branchBelowLabel{GBT_BRANCH_LABEL_PROBS};
 
   // Fonts for legends
   wxFont m_font;
 
   // Colors for nodes
   wxColour m_chanceColor, m_terminalColor;
-  mutable Gambit::Array<wxColour> m_playerColors;
+  mutable Array<wxColour> m_playerColors;
 
   // Decimal places to display
-  int m_numDecimals;
+  int m_numDecimals{4};
 
 public:
   // Lifecycle
-  gbtStyle(void);
-  
+  TreeRenderConfig();
+
   // Node styling
-  int NodeSize(void) const { return m_nodeSize; }
+  int GetNodeSize() const { return m_nodeSize; }
   void SetNodeSize(int p_nodeSize) { m_nodeSize = p_nodeSize; }
 
-  int TerminalSpacing(void) const { return m_terminalSpacing; }
+  int GetTerminalSpacing() const { return m_terminalSpacing; }
   void SetTerminalSpacing(int p_spacing) { m_terminalSpacing = p_spacing; }
 
-  int ChanceToken(void) const { return m_chanceToken; }
-  void SetChanceToken(int p_token) { m_chanceToken = p_token; }
+  NodeTokenStyle GetChanceToken() const { return m_chanceToken; }
+  void SetChanceToken(NodeTokenStyle p_token) { m_chanceToken = p_token; }
 
-  int PlayerToken(void) const { return m_playerToken; }
-  void SetPlayerToken(int p_token) { m_playerToken = p_token; }
+  NodeTokenStyle GetPlayerToken() const { return m_playerToken; }
+  void SetPlayerToken(NodeTokenStyle p_token) { m_playerToken = p_token; }
 
-  int TerminalToken(void) const { return m_terminalToken; }
-  void SetTerminalToken(int p_token) { m_terminalToken = p_token; }
-
-  bool RootReachable(void) const { return m_rootReachable; }
-  void SetRootReachable(bool p_reachable) { m_rootReachable = p_reachable; }
-
+  NodeTokenStyle GetTerminalToken() const { return m_terminalToken; }
+  void SetTerminalToken(NodeTokenStyle p_token) { m_terminalToken = p_token; }
 
   // Branch styling
-  int BranchLength(void) const { return m_branchLength; }
+  int GetBranchLength() const { return m_branchLength; }
   void SetBranchLength(int p_length) { m_branchLength = p_length; }
 
-  int TineLength(void) const { return m_tineLength; }
+  int GetTineLength() const { return m_tineLength; }
   void SetTineLength(int p_length) { m_tineLength = p_length; }
 
-  int BranchStyle(void) const { return m_branchStyle; }
-  void SetBranchStyle(int p_style) { m_branchStyle = p_style; }
+  BranchLineStyle GetBranchStyle() const { return m_branchStyle; }
+  void SetBranchStyle(BranchLineStyle p_style) { m_branchStyle = p_style; }
 
-  int BranchLabels(void) const { return m_branchLabels; }
-  void SetBranchLabels(int p_labels) { m_branchLabels = p_labels; }
+  int GetNodeLevelLength() const
+  {
+    if (m_branchStyle == GBT_BRANCH_STYLE_LINE) {
+      return m_nodeSize + m_branchLength;
+    }
+    return m_nodeSize + m_branchLength + m_tineLength;
+  }
 
+  BranchLabelOrientationStyle GetBranchLabels() const { return m_branchLabels; }
+  void SetBranchLabels(BranchLabelOrientationStyle p_labels) { m_branchLabels = p_labels; }
 
-  // Information set styling
-  int InfosetConnect(void) const { return m_infosetConnect; }
-  void SetInfosetConnect(int p_connect) { m_infosetConnect = p_connect; }
-
-  int InfosetJoin(void) const { return m_infosetJoin; }
-  void SetInfosetJoin(int p_join) { m_infosetJoin = p_join; }
-
+  InfosetJoinStyle GetInfosetJoin() const { return m_infosetJoin; }
+  void SetInfosetJoin(InfosetJoinStyle p_join) { m_infosetJoin = p_join; }
 
   // Legends
-  int NodeAboveLabel(void) const { return m_nodeAboveLabel; }
-  void SetNodeAboveLabel(int p_label) { m_nodeAboveLabel = p_label; }
+  NodeLabelStyle GetNodeAboveLabel() const { return m_nodeAboveLabel; }
+  void SetNodeAboveLabel(NodeLabelStyle p_label) { m_nodeAboveLabel = p_label; }
 
-  int NodeBelowLabel(void) const { return m_nodeBelowLabel; }
-  void SetNodeBelowLabel(int p_label) { m_nodeBelowLabel = p_label; }
+  NodeLabelStyle GetNodeBelowLabel() const { return m_nodeBelowLabel; }
+  void SetNodeBelowLabel(NodeLabelStyle p_label) { m_nodeBelowLabel = p_label; }
 
-  int BranchAboveLabel(void) const { return m_branchAboveLabel; }
-  void SetBranchAboveLabel(int p_label) { m_branchAboveLabel = p_label; }
+  BranchLabelStyle GetBranchAboveLabel() const { return m_branchAboveLabel; }
+  void SetBranchAboveLabel(BranchLabelStyle p_label) { m_branchAboveLabel = p_label; }
 
-  int BranchBelowLabel(void) const { return m_branchBelowLabel; }
-  void SetBranchBelowLabel(int p_label) { m_branchBelowLabel = p_label; }
+  BranchLabelStyle GetBranchBelowLabel() const { return m_branchBelowLabel; }
+  void SetBranchBelowLabel(BranchLabelStyle p_label) { m_branchBelowLabel = p_label; }
 
-  // Fonts 
-  const wxFont &GetFont(void) const { return m_font; }
+  LabelGenerator GetNodeLabelGenerator(NodeLabelStyle p_which,
+                                       const AnalysisWorkspace &p_workspace) const;
+  LabelGenerator GetBranchLabelGenerator(BranchLabelStyle p_which,
+                                         const AnalysisWorkspace &p_workspace) const;
+
+  // Fonts
+  const wxFont &GetFont() const { return m_font; }
   void SetFont(const wxFont &p_font) { m_font = p_font; }
 
   // Colors
-  const wxColour &ChanceColor(void) const { return m_chanceColor; }
+  const wxColour &ChanceColor() const { return m_chanceColor; }
   void SetChanceColor(const wxColour &p_color) { m_chanceColor = p_color; }
 
-  const wxColour &TerminalColor(void) const { return m_terminalColor; }
+  const wxColour &TerminalColor() const { return m_terminalColor; }
   void SetTerminalColor(const wxColour &p_color) { m_terminalColor = p_color; }
 
   const wxColour &GetPlayerColor(int pl) const;
-  void SetPlayerColor(int pl, const wxColour &p_color)
-    { m_playerColors[pl] = p_color; }
+  const wxColour &GetPlayerColor(const GamePlayer &) const;
+  void SetPlayerColor(int pl, const wxColour &p_color) { m_playerColors[pl] = p_color; }
 
   // Decimals
-  int NumDecimals(void) const { return m_numDecimals; }
+  int NumDecimals() const { return m_numDecimals; }
   void SetNumDecimals(int p_decimals) { m_numDecimals = p_decimals; }
 
   // Reset to the "factory" defaults
-  void SetDefaults(void);
+  void SetDefaults();
 
-  /// @name Reading and writing XML
-  //@{
-  /// Get the color settings as an XML entry
-  std::string GetColorXML(void) const;
-  /// Set the color settings from an XML entry
-  void SetColorXML(TiXmlNode *p_node);
-
-  /// Get the font settings as an XML entry
-  std::string GetFontXML(void) const;
-  /// Set the font settings from an XML entry
-  void SetFontXML(TiXmlNode *p_node);
-
-  /// Get the layout settings as an XML entry
-  std::string GetLayoutXML(void) const;
-  /// Set the layout settings from an XML entry
-  void SetLayoutXML(TiXmlNode *p_node);
-
-  /// Get the label settings as an XML entry
-  std::string GetLabelXML(void) const;
-  /// Set the label settings from an XML entry
-  void SetLabelXML(TiXmlNode *p_node);
-  //@}
+  /// Copy GUI presentation values to and from the neutral workspace representation.
+  void Save(LegacyWorkspaceFile &p_workspace) const;
+  void Load(const LegacyWorkspaceFile &p_workspace);
 };
 
-#endif  // STYLE_H
+/// Builds a small solid-color square bitmap, e.g. for use as a player-color swatch
+/// on a menu item or button.
+wxBitmap MakeColorSwatch(const wxColour &p_color, int p_size = 16);
+
+} // namespace Gambit::GUI
+
+#endif // STYLE_H

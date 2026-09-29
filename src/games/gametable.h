@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/gametable.h
+// FILE: src/games/gametable.h
 // Declaration of strategic game representation
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,8 +20,10 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMETABLE_H
-#define GAMETABLE_H
+#ifndef GAMBIT_GAMES_GAMETABLE_H
+#define GAMBIT_GAMES_GAMETABLE_H
+
+#include <mutex>
 
 #include "gameexpl.h"
 
@@ -34,14 +36,37 @@ class GameTableRep : public GameExplicitRep {
   friend class PureStrategyProfileRep;
   template <class T> friend class MixedStrategyProfile;
   template <class T> friend class TableMixedStrategyProfileRep;
+
+public:
+  /// Payoffs of every contingency, by player (indexed from 0), stored contiguously in the order
+  /// of the contingencies of the table
+  template <class T> using PayoffTable = std::vector<std::vector<T>>;
+
 private:
-  Array<GameOutcomeRep *> m_results;
-  Game m_unrestricted;
+  std::vector<GameOutcomeRep *> m_results;
+
+  // The payoff tables derived from the outcomes, and the versions of the game they describe
+  mutable std::mutex m_payoffTableMutex;
+  mutable std::shared_ptr<const PayoffTable<double>> m_doublePayoffs;
+  mutable std::shared_ptr<const PayoffTable<Rational>> m_rationalPayoffs;
+  mutable unsigned int m_doublePayoffsVersion{0}, m_rationalPayoffsVersion{0};
+
+  template <class T> PayoffTable<T> BuildPayoffTable() const;
 
   /// @name Private auxiliary functions
   //@{
-  void IndexStrategies(void);
-  void RebuildTable(void);
+  /// Rebuild the outcome table after the strategies of p_player have changed.
+  /// p_oldToNew maps old strategy indices to new index, or to -1 if the strategy was removed.
+  void RebuildTable(const std::vector<long> &old_radices, long p_player,
+                    const std::vector<long> &p_oldToNew);
+  /// Resolves p_contingencies to the flat m_results indices they refer to, validating that each
+  /// contingency gives exactly one strategy per player and is referenced only once.
+  std::set<long>
+  ResolveContingencies(const std::vector<std::vector<GameStrategy>> &p_contingencies) const;
+  /// Returns the subset of p_covered no longer referenced by any contingency outside p_selected.
+  std::set<const GameOutcomeRep *>
+  ComputeAbsorbedOutcomes(const std::set<long> &p_selected,
+                          const std::set<const GameOutcomeRep *> &p_covered) const;
   //@}
 
 public:
@@ -49,89 +74,72 @@ public:
   //@{
   /// Construct a new table game with the given dimension
   /// If p_sparseOutcomes = true, outcomes for all contingencies are left null
-  GameTableRep(const Array<int> &p_dim, bool p_sparseOutcomes = false);
-  virtual Game Copy(void) const;
+  explicit GameTableRep(const std::vector<int> &p_dim, bool p_sparseOutcomes = false);
+  GameOutcome MakeOutcome(const std::vector<std::vector<GameStrategy>> &,
+                          const std::vector<Number> &, const std::string &) override;
+  void MakeOutcomeNull(const std::vector<std::vector<GameStrategy>> &) override;
+  Game Copy() const override;
   //@}
 
   /// @name General data access
   //@{
-  virtual bool IsTree(void) const { return false; }
-  virtual bool IsConstSum(void) const;
-  virtual bool IsPerfectRecall(GameInfoset &, GameInfoset &) const
-  { return true; }
-  //@}
+  bool IsConstSum() const override;
 
-  /// @name Interface with restricted game mechanism
-  //@{
-  virtual bool IsRestriction(void) const { return (m_unrestricted != 0); }
-  virtual Game Unrestrict(void) const 
-  { if (m_unrestricted) return m_unrestricted; else throw UndefinedException(); }
+  /// Returns the payoffs of every contingency for the current version of the game, as type T
+  /// (double or Rational).  The table is shared by all callers until the game is next modified.
+  template <class T> std::shared_ptr<const PayoffTable<T>> GetPayoffTable() const;
+
+  /// Returns the smallest payoff to the player in any play of the game
+  Rational GetPlayerMinPayoff(const GamePlayer &) const override;
+  /// Returns the largest payoff to the player in any play of the game
+  Rational GetPlayerMaxPayoff(const GamePlayer &) const override;
+
+  bool IsPerfectRecall() const override { return true; }
   //@}
 
   /// @name Dimensions of the game
   //@{
-  /// The number of actions in each information set
-  virtual PVector<int> NumActions(void) const
-  { throw UndefinedException(); }
-  /// The number of members in each information set
-  virtual PVector<int> NumMembers(void) const
-  { throw UndefinedException(); }
   /// Returns the total number of actions in the game
-  virtual int BehavProfileLength(void) const
-  { throw UndefinedException(); }
+  int BehavProfileLength() const override { throw UndefinedException(); }
   //@}
 
   /// @name Players
   //@{
   /// Returns the chance (nature) player
-  virtual GamePlayer GetChance(void) const { throw UndefinedException(); }
-  /// Creates a new player in the game, with no moves
-  virtual GamePlayer NewPlayer(void);
-  //@}
-
-  /// @name Information sets
-  //@{
-  /// Returns the iset'th information set in the game (numbered globally)
-  virtual GameInfoset GetInfoset(int iset) const 
-  { throw UndefinedException(); }
-  /// Returns an array with the number of information sets per personal player
-  virtual Array<int> NumInfosets(void) const
-  { throw UndefinedException(); }
-  /// Returns the act'th action in the game (numbered globally)
-  virtual GameAction GetAction(int act) const
-  { throw UndefinedException(); }
+  GamePlayer GetChance() const override { throw UndefinedException(); }
+  void SetPlayers(const std::vector<std::string> &) override;
   //@}
 
   /// @name Nodes
   //@{
   /// Returns the root node of the game
-  virtual GameNode GetRoot(void) const { throw UndefinedException(); } 
+  GameNode GetRoot() const override { throw UndefinedException(); }
   /// Returns the number of nodes in the game
-  virtual int NumNodes(void) const { throw UndefinedException(); }
+  size_t NumNodes() const override { throw UndefinedException(); }
+  /// Returns the number of non-terminal nodes in the game
+  size_t NumNonterminalNodes() const override { throw UndefinedException(); }
   //@}
 
-  /// @name Outcomes
+  /// @name Strategies
   //@{
-  /// Deletes the specified outcome from the game
-  virtual void DeleteOutcome(const GameOutcome &);
+  void RelabelStrategies(const GamePlayer &, const std::map<std::string, std::string> &) override;
+  void SetStrategies(const GamePlayer &, const std::vector<std::string> &) override;
   //@}
 
   /// @name Writing data files
   //@{
   /// Write the game to a file in .nfg outcome format
-  virtual void WriteNfgFile(std::ostream &) const;
-  //@}
+  void WriteNfgFile(std::ostream &) const override;
 
-  virtual PureStrategyProfile NewPureStrategyProfile(void) const;
-  virtual MixedStrategyProfile<double> NewMixedStrategyProfile(double) const;
-  virtual MixedStrategyProfile<Rational> NewMixedStrategyProfile(const Rational &) const; 
-  virtual MixedStrategyProfile<double> NewMixedStrategyProfile(double, const StrategySupportProfile&) const;
-  virtual MixedStrategyProfile<Rational> NewMixedStrategyProfile(const Rational &, const StrategySupportProfile&) const;
-
+  PureStrategyProfile NewPureStrategyProfile() const override;
+  MixedStrategyProfile<double> NewMixedStrategyProfile(double) const override;
+  MixedStrategyProfile<Rational> NewMixedStrategyProfile(const Rational &) const override;
+  MixedStrategyProfile<double>
+  NewMixedStrategyProfile(double, const StrategySupportProfile &) const override;
+  MixedStrategyProfile<Rational>
+  NewMixedStrategyProfile(const Rational &, const StrategySupportProfile &) const override;
 };
 
-}
+} // namespace Gambit
 
-
-
-#endif  // GAMETABLE_H
+#endif // GAMBIT_GAMES_GAMETABLE_H

@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/menuconst.h
 // Declaration of constants used for menu items
@@ -20,10 +20,11 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef MENUCONST_H
-#define MENUCONST_H
+#ifndef GAMBIT_GUI_MENUCONST_H
+#define GAMBIT_GUI_MENUCONST_H
 
-typedef enum {
+namespace Gambit::GUI {
+enum MenuItems {
   GBT_MENU_FILE_NEW_EFG = 1098,
   GBT_MENU_FILE_NEW_NFG = 1099,
   GBT_MENU_FILE_EXPORT = 1102,
@@ -32,11 +33,7 @@ typedef enum {
   GBT_MENU_FILE_EXPORT_PNG = 1105,
   GBT_MENU_FILE_EXPORT_POSTSCRIPT = 1106,
   GBT_MENU_FILE_EXPORT_SVG = 1109,
-  GBT_MENU_FILE_EXPORT_EFG = 1107,
-  GBT_MENU_FILE_EXPORT_NFG = 1108,
 
-  GBT_MENU_EDIT_INSERT_MOVE = 1200,
-  GBT_MENU_EDIT_INSERT_ACTION = 1201,
   GBT_MENU_EDIT_DELETE_TREE = 1202,
   GBT_MENU_EDIT_DELETE_PARENT = 1203,
   GBT_MENU_EDIT_REMOVE_OUTCOME = 1204,
@@ -45,7 +42,13 @@ typedef enum {
   GBT_MENU_EDIT_NODE = 1420,
   GBT_MENU_EDIT_MOVE = 1421,
 
-  GBT_MENU_EDIT_NEWPLAYER = 1500,
+  // Reserves a block of IDs for the "Append/Insert move for" submenu on the node context
+  // menu, one per player (plus chance); see EfgDisplay::UpdateNewMoveMenu.
+  GBT_MENU_EDIT_NEW_MOVE_BASE = 1430,
+
+  // Reserves a block of IDs for the "Assign this move to" submenu on the node context menu,
+  // one per (non-chance) player; see EfgDisplay::UpdateReassignPlayerMenu.
+  GBT_MENU_EDIT_REASSIGN_PLAYER_BASE = 1500,
 
   GBT_MENU_VIEW_PROFILES = 1850,
   GBT_MENU_VIEW_ZOOMIN = 1601,
@@ -57,22 +60,11 @@ typedef enum {
   GBT_MENU_FORMAT_LAYOUT = 1620,
   GBT_MENU_FORMAT_LABELS = 1604,
   GBT_MENU_FORMAT_FONTS = 1612,
-  GBT_MENU_FORMAT_DECIMALS_ADD = 1622,
-  GBT_MENU_FORMAT_DECIMALS_DELETE = 1623,
 
   GBT_MENU_TOOLS_DOMINANCE = 1800,
   GBT_MENU_TOOLS_EQUILIBRIUM = 1801,
   GBT_MENU_TOOLS_QRE = 1802
-} gbtMenuItems;
+};
+} // namespace Gambit::GUI
 
-
-#endif // MENUCONST_H
-
-
-
-
-
-
-
-
-
+#endif // GAMBIT_GUI_MENUCONST_H

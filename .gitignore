@@ -13,7 +13,6 @@ libtool
 *.la
 *.a
 gambit-*
-game.wrap.cpp
 _build
 .DS_Store
 .dirstamp
@@ -21,6 +20,7 @@ _build
 build
 *.egg-info
 *.pyc
+*.so
 
 config.guess
 config.sub
@@ -30,3 +30,29 @@ gambit.msi
 gambit.wixobj
 gambit.wixpdb
 installer
+compile
+depcomp
+install-sh
+missing
+gambit
+.python-version
+dist
+.venv
+*.dmg
+Gambit.app/*
+*.so
+*.dmg
+Gambit.app/*
+*.ipynb_checkpoints
+doc/**/*.ef
+catalog/doc/**/*.ef
+build_support/msw/gambit.wxs
+build_support/osx/Info.plist
+src/pygambit/catalog
+catalog/doc/_table.rst
+catalog/doc/_build
+catalog/games/img/**/*.pdf
+catalog/games/img/**/*.png
+catalog/games/img/**/*.tex
+catalog/games/img/**/*.ef
+catalog/games/img/**/*.svg

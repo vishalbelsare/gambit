@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gambit/nash/enummixed.h
+// FILE: src/solvers/enummixed/enummixed.h
 // Enumerate all mixed strategy equilibria of two-player games
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,13 +20,12 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_NASH_ENUMMIXED_H
-#define GAMBIT_NASH_ENUMMIXED_H
+#ifndef GAMBIT_SOLVERS_ENUMMIXED_ENUMMIXED_H
+#define GAMBIT_SOLVERS_ENUMMIXED_ENUMMIXED_H
 
-#include "games/nash.h"
+#include "solvers/nash.h"
 
-namespace Gambit {
-namespace Nash {
+namespace Gambit::Nash {
 
 template <class T> class EnumMixedStrategySolver;
 
@@ -35,67 +34,57 @@ template <class T> class EnumMixedStrategySolver;
 /// mixed strategies.
 ///
 template <class T> class EnumMixedStrategySolution {
-  friend class EnumMixedStrategySolver<T>;
 public:
-  EnumMixedStrategySolution(const Game &p_game) : m_game(p_game) { }
-  ~EnumMixedStrategySolution()  { }
+  explicit EnumMixedStrategySolution(const Game &p_game) : m_game(p_game) {}
+  ~EnumMixedStrategySolution() = default;
 
-  const Game &GetGame(void) const { return m_game; }
-  const List<MixedStrategyProfile<T> > &GetExtremeEquilibria(void) const
-  { return m_extremeEquilibria; }
-  
-  List<List<MixedStrategyProfile<T> > > GetCliques(void) const;
+  const Game &GetGame() const { return m_game; }
+  const std::list<MixedStrategyProfile<T>> &GetExtremeEquilibria() const
+  {
+    return m_extremeEquilibria;
+  }
 
-private:
+  Array<Array<MixedStrategyProfile<T>>> GetCliques() const;
+
   Game m_game;
-  List<MixedStrategyProfile<T> > m_extremeEquilibria;
+  std::list<MixedStrategyProfile<T>> m_extremeEquilibria;
+  bool success{true};
 
   /// Representation of the graph connecting the extreme equilibria
   ///@{
-  List<Vector<T> > m_key1, m_key2;  
-  List<int> m_node1, m_node2; // IDs of each component of the extreme equilibria
-  int m_v1, m_v2;
+  Array<Vector<T>> m_key1, m_key2;
+  Array<int> m_node1, m_node2; // IDs of each component of the extreme equilibria
+  int m_v1{0}, m_v2{0};
   ///@}
 
   /// Representation of the connectedness of the extreme equilibria
   /// These are generated only on demand
-  mutable List<Array<int> > m_cliques1, m_cliques2;
+  mutable Array<Array<int>> m_cliques1, m_cliques2;
 };
 
+template <class T>
+std::shared_ptr<EnumMixedStrategySolution<T>>
+EnumMixedStrategySolveDetailed(const Game &p_game,
+                               StrategyCallbackType<T> p_onEquilibrium = NullStrategyCallback<T>,
+                               const CancelToken &p_cancel = CancelToken());
 
-template <class T> class EnumMixedStrategySolver : public StrategySolver<T> {
-public:
-  EnumMixedStrategySolver(shared_ptr<StrategyProfileRenderer<T> > p_onEquilibrium = 0)
-    : StrategySolver<T>(p_onEquilibrium) {}
-  virtual ~EnumMixedStrategySolver() { }
-
-  shared_ptr<EnumMixedStrategySolution<T> > SolveDetailed(const Game &p_game) const;
-  List<MixedStrategyProfile<T> > Solve(const Game &p_game) const
-  { return SolveDetailed(p_game)->GetExtremeEquilibria(); }
-  
-  
-private:
-  /// Implement fuzzy equality for floating-point version when testing Nashness
-  static bool EqZero(const T &x);
+/// @brief The result of enumerating all extreme mixed-strategy Nash equilibria of a
+///        two-player game
+template <class T> struct EnumMixedStrategyResult {
+  std::list<MixedStrategyProfile<T>> equilibria;
+  bool success{true};
 };
 
- 
+template <class T>
+EnumMixedStrategyResult<T>
+EnumMixedStrategySolve(const Game &p_game,
+                       StrategyCallbackType<T> p_onEquilibrium = NullStrategyCallback<T>,
+                       const CancelToken &p_cancel = CancelToken())
+{
+  const auto solution = EnumMixedStrategySolveDetailed<T>(p_game, p_onEquilibrium, p_cancel);
+  return {solution->m_extremeEquilibria, solution->success};
+}
 
- 
-//
-// Enumerate all mixed-strategy Nash equilibria of a two-player game
-// using the lrslib backend.
-//
-class EnumMixedLrsStrategySolver : public StrategySolver<Rational> {
-public:
-  EnumMixedLrsStrategySolver(shared_ptr<StrategyProfileRenderer<Rational> > p_onEquilibrium = 0)
-    : StrategySolver<Rational>(p_onEquilibrium) { }
-  virtual ~EnumMixedLrsStrategySolver() { }
+} // end namespace Gambit::Nash
 
-  List<MixedStrategyProfile<Rational> > Solve(const Game &p_game) const;
-};
-
-}  // end namespace Gambit::Nash
-}  // end namespace Gambit
-    
-#endif  // GAMBIT_NASH_ENUMMIXED_H
+#endif // GAMBIT_SOLVERS_ENUMMIXED_ENUMMIXED_H

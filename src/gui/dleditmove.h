@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dleditmove.h
 // Dialog for viewing and editing properties of a move
@@ -20,29 +20,53 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef DLEDITMOVE_H
-#define DLEDITMOVE_H
+#ifndef GAMBIT_GUI_DLEDITMOVE_H
+#define GAMBIT_GUI_DLEDITMOVE_H
 
-class gbtActionSheet;
+#include <wx/bmpcbox.h>
 
-class gbtEditMoveDialog : public wxDialog {
-private:
-  Gambit::GameInfoset m_infoset;
-  wxChoice *m_player;
-  wxTextCtrl *m_infosetName;
-  gbtActionSheet *m_actionSheet;
+#include "editlabel.h"
+
+namespace Gambit::GUI {
+class ActionPanel;
+
+class EditMoveDialog final : public wxDialog {
+  std::shared_ptr<GameDocument> m_doc;
+  GameInfoset m_infoset;
+  wxPanel *m_headerPanel;
+  wxBitmapComboBox *m_player; // shows each player's colour swatch alongside their name
+  LabelTextCtrl *m_infosetLabel;
+  wxColour m_infosetLabelDefaultBg;
+  ActionPanel *m_actionPanel;
+  wxStaticText *m_errorText;
+
+  void UpdateValidation();
+  void OnOK(wxCommandEvent &);
 
 public:
   // Lifecycle
-  gbtEditMoveDialog(wxWindow *p_parent, Gambit::GameInfoset p_infoset);
+  EditMoveDialog(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc,
+                 const GameInfoset &p_infoset);
 
   // Data access (only valid when ShowModal() returns with wxID_OK)
-  wxString GetInfosetName(void) const { return m_infosetName->GetValue(); }
-  int GetPlayer(void) const { return (m_player->GetSelection() + 1); }
+  wxString GetInfosetLabel() const { return m_infosetLabel->GetNormalizedValue(); }
+  int GetPlayer() const { return (m_player->GetSelection() + 1); }
 
-  int NumActions(void) const;
-  wxString GetActionName(int p_act) const;
-  wxString GetActionProb(int p_act) const; 
+  // The number of action rows currently in the panel, after any adds/deletes/reorders.
+  // Includes rows marked deleted; check IsDeleted() before committing one.
+  int NumActions() const;
+  // True if the row at position `p_index` is marked for deletion (kept in the panel, shown
+  // disabled, but excluded from the operation this dialog commits).
+  bool IsDeleted(int p_index) const;
+  // The label the action at position `p_index` had (or the placeholder it was assigned,
+  // if newly added) before any edits made in this dialog.  Identifies the action for the
+  // structural part of the operation, independent of anything typed into its label field.
+  std::string GetStableLabel(int p_index) const;
+  // The label as currently typed into the row at position `p_index`.
+  wxString GetActionLabel(int p_index) const;
+  // The probability currently typed into the row at position `p_index` (events only).
+  Number GetActionProb(int p_index) const;
 };
+} // namespace Gambit::GUI
 
-#endif   // DLEDITMOVE_H
+#endif // GAMBIT_GUI_DLEDITMOVE_H

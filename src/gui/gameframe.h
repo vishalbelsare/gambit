@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/gameframe.h
 // Interface to frame containing the views of a game
@@ -20,8 +20,8 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMEFRAME_H
-#define GAMEFRAME_H
+#ifndef GAMBIT_GUI_GAMEFRAME_H
+#define GAMBIT_GUI_GAMEFRAME_H
 
 #include <wx/printdlg.h>
 
@@ -30,23 +30,23 @@
 class wxSplitterWindow;
 class wxSplitterEvent;
 
-class gbtAnalysisNotebook;
-class gbtEfgPanel;
-class gbtNfgPanel;
+namespace Gambit::GUI {
+class AnalysisNotebook;
+class EfgPanel;
+class NfgPanel;
 
-class gbtGameFrame : public wxFrame, public gbtGameView {
-private:
+class GameFrame final : public wxFrame, public GameView {
   wxSplitterWindow *m_splitter;
-  gbtEfgPanel *m_efgPanel;
-  gbtNfgPanel *m_nfgPanel;
-  gbtAnalysisNotebook *m_analysisPanel;
+  EfgPanel *m_efgPanel;
+  NfgPanel *m_nfgPanel;
+  AnalysisNotebook *m_analysisPanel;
 
   wxPageSetupData m_pageSetupData;
   wxPrintData m_printData;
 
-  void MakeMenus(void);
-  void MakeToolbar(void);
-  
+  void MakeMenus();
+  void MakeToolbar();
+
   // Event handlers
   void OnCloseWindow(wxCloseEvent &);
 
@@ -56,8 +56,6 @@ private:
   void OnFileOpen(wxCommandEvent &);
   void OnFileClose(wxCommandEvent &);
   void OnFileSave(wxCommandEvent &);
-  void OnFileExportEfg(wxCommandEvent &);
-  void OnFileExportNfg(wxCommandEvent &);
   void OnFileExportGraphic(wxCommandEvent &);
   void OnFileExportPS(wxCommandEvent &);
   void OnFileExportSVG(wxCommandEvent &);
@@ -71,18 +69,7 @@ private:
   void OnEditUndo(wxCommandEvent &);
   void OnEditRedo(wxCommandEvent &);
 
-  void OnEditInsertMove(wxCommandEvent &);
-  void OnEditInsertAction(wxCommandEvent &);
-  void OnEditDeleteTree(wxCommandEvent &);
-  void OnEditDeleteParent(wxCommandEvent &);
-  void OnEditRemoveOutcome(wxCommandEvent &);
-  void OnEditReveal(wxCommandEvent &);
-
-  void OnEditNode(wxCommandEvent &);
-  void OnEditMove(wxCommandEvent &);
   void OnEditGame(wxCommandEvent &);
-
-  void OnEditNewPlayer(wxCommandEvent &);
 
   void OnViewProfiles(wxCommandEvent &);
   void OnViewZoom(wxCommandEvent &);
@@ -90,8 +77,6 @@ private:
 
   void OnFormatLayout(wxCommandEvent &);
   void OnFormatLabels(wxCommandEvent &);
-  void OnFormatDecimalsAdd(wxCommandEvent &);
-  void OnFormatDecimalsDelete(wxCommandEvent &);
   void OnFormatFonts(wxCommandEvent &);
 
   void OnToolsDominance(wxCommandEvent &);
@@ -105,19 +90,20 @@ private:
   /// @name Overriding wxWindow behavior
   //@{
   /// Flush any pending changes in document before processing event
-  bool ProcessEvent(wxEvent &);
+  bool ProcessEvent(wxEvent &) override;
   //@}
-  
-  // Overriding gbtGameView members
-  void OnUpdate(void);
+
+  // Overriding GameView members
+  void OnUpdate() override;
 
 public:
   // CONSTRUCTOR AND DESTRUCTOR
-  gbtGameFrame(wxWindow *p_parent, gbtGameDocument *p_doc);
-  virtual ~gbtGameFrame();
+  GameFrame(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc);
+  ~GameFrame() override;
 
   DECLARE_EVENT_TABLE()
 };
 
-#endif // GAMEFRAME_H
+} // namespace Gambit::GUI
 
+#endif // GAMBIT_GUI_GAMEFRAME_H

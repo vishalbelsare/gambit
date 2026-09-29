@@ -1,0 +1,75 @@
+.. _gambit-enummixed:
+
+:program:`gambit-enummixed`
+===========================
+
+Enumerate equilibria in a two-player game.
+See the :ref:`algorithm description <enummixed>` for full details.
+
+.. program:: gambit-enummixed
+
+.. cmdoption:: -d
+
+   By default, this program computes using exact
+   rational arithmetic. Since the extreme points computed by this method
+   are guaranteed to be rational when the payoffs in the game are
+   rational, this permits exact computation of the equilibrium set.
+   Computation using rational arithmetic is in general slow, however. For
+   most games, acceptable results can be obtained by computing using the
+   computer's native floating-point arithmetic. Using this flag enables
+   computation in floating-point, and expresses all output using decimal
+   representations with the specified number of digits.
+
+.. cmdoption:: -c
+
+   The program outputs the extreme equilibria as it finds them,
+   prefixed by the tag NE . If this option is specified, once all extreme
+   equilbria are identified, the program computes the convex sets which
+   make up the set of equilibria. The program then additionally outputs
+   each convex set, prefixed by convex-N , where N indexes the set. The
+   set of all equilibria, then, is the union of these convex sets.
+
+.. cmdoption:: -D
+
+   .. versionadded:: 17.0.0
+
+   The default output format for computed equilibria is a
+   comma-separated list of strategy probabilities, suitable
+   for postprocessing by automated tools.  Specifying `-D` instead
+   causes the program to output greater detail on each equilibrium
+   profile computed (and, with :option:`-c`, on each member of every
+   convex set reported).
+
+.. cmdoption:: -h
+
+   Prints a help message listing the available options.
+
+.. cmdoption:: -q
+
+   Suppresses printing of the banner at program launch.
+
+
+Computing the equilibria, in mixed strategies, of
+the reduced strategic form of the example in Figure 2 of :cite:p:`Sel75`::
+
+   $ gambit-enummixed catalog/games/journals/ijgt/selten1975/fig2.efg
+   Compute Nash equilibria by enumerating extreme points
+   Gambit version |release|, Copyright (C) 1994-2026, The Gambit Project
+   This is free software, distributed under the GNU GPL
+
+   NE,1,0,0,1,0
+   NE,1,0,0,1/2,1/2
+
+In fact, this game has a one-dimensional continuum of
+equilibria.  This fact can be observed by examining the connectedness
+information using the ``-c`` switch::
+
+   $ gambit-enummixed -c catalog/games/journals/ijgt/selten1975/fig2.efg
+   Compute Nash equilibria by enumerating extreme points
+   Gambit version |release|, Copyright (C) 1994-2026, The Gambit Project
+   This is free software, distributed under the GNU GPL
+
+   NE,1,0,0,1,0
+   NE,1,0,0,1/2,1/2
+   convex-1,1,0,0,1/2,1/2
+   convex-1,1,0,0,1,0

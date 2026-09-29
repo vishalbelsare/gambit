@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/libgambit/gameexpl.h
+// FILE: src/games/gameexpl.h
 // Declaration of base class for explicit game representations
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,8 +20,8 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMEEXPL_H
-#define GAMEEXPL_H
+#ifndef GAMBIT_GAMES_GAMEEXPL_H
+#define GAMBIT_GAMES_GAMEEXPL_H
 
 #include "game.h"
 
@@ -29,73 +29,22 @@ namespace Gambit {
 
 class GameExplicitRep : public GameRep {
   template <class T> friend class MixedStrategyProfile;
-protected:
-  Array<GamePlayerRep *> m_players;
-  Array<GameOutcomeRep *> m_outcomes;
-
-  /// @name Writing data files
-  //@{
-  /// Write the game in .efg format to the specified stream
-  virtual void WriteEfgFile(std::ostream &) const
-  { throw UndefinedException(); }
-  /// Write the game in .nfg format to the specified stream
-  virtual void WriteNfgFile(std::ostream &) const
-  { throw UndefinedException(); }
-  //@}
 
 public:
-  /// @name Lifecycle
-  //@{
-  /// Destructor
-  virtual ~GameExplicitRep();
-  //@}
-
   /// @name General data access
   //@{
-  /// Returns the smallest payoff in any outcome of the game
-  virtual Rational GetMinPayoff(int pl = 0) const;
-  /// Returns the largest payoff in any outcome of the game
-  virtual Rational GetMaxPayoff(int pl = 0) const;
+  /// Returns the smallest payoff to any player in any play of the game
+  Rational GetMinPayoff() const override;
+  /// Returns the largest payoff to any player in any play of the game
+  Rational GetMaxPayoff() const override;
   //@}
-
-  /// @name Dimensions of the game
-  //@{
-  /// The number of strategies for each player
-  virtual Array<int> NumStrategies(void) const;
-  /// Gets the i'th strategy in the game, numbered globally
-  virtual GameStrategy GetStrategy(int p_index) const;
-  /// Returns the number of strategy contingencies in the game
-  virtual int NumStrategyContingencies(void) const;
-  /// Returns the total number of strategies in the game
-  virtual int MixedProfileLength(void) const;
-  //@}
-
-  /// @name Players
-  //@{
-  /// Returns the number of players in the game
-  virtual int NumPlayers(void) const { return m_players.Length(); }
-  /// Returns the pl'th player in the game
-  virtual GamePlayer GetPlayer(int pl) const { return m_players[pl]; }
-  /// Returns the set of players in the game
-  virtual const GamePlayers &Players(void) const { return m_players; }
-  //@}
-
-  /// @name Outcomes
-  //@{
-  /// Returns the number of outcomes defined in the game
-  virtual int NumOutcomes(void) const { return m_outcomes.Length(); }
-  /// Returns the index'th outcome defined in the game
-  virtual GameOutcome GetOutcome(int index) const { return m_outcomes[index]; }
-  /// Creates a new outcome in the game
-  virtual GameOutcome NewOutcome(void);
 
   /// @name Writing data files
   //@{
-  virtual void Write(std::ostream &p_stream,
-		     const std::string &p_format="native") const;
+  void Write(std::ostream &p_stream, const std::string &p_format = "native") const override;
   //@}
 };
 
-}
+} // namespace Gambit
 
-#endif  // GAMEEXPL_H
+#endif // GAMBIT_GAMES_GAMEEXPL_H

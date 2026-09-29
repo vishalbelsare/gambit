@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: src/liblinear/ludecomp.h
+// FILE: src/solvers/linalg/ludecomp.h
 // Interface to LU decomposition classes
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,166 +20,119 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef LUDECOMP_H
-#define LUDECOMP_H
+#ifndef GAMBIT_SOLVERS_LINALG_LUDECOMP_H
+#define GAMBIT_SOLVERS_LINALG_LUDECOMP_H
 
-#include "gambit.h"
-#include "basis.h"
+#include <list>
+#include <memory>
 
-namespace Gambit {
+#include "core/core.h"
 
-namespace linalg {
-    
+namespace Gambit::linalg {
+
 template <class T> class Tableau;
+class Basis;
 
-// ---------------------------------------------------------------------------
-// Class EtaMatrix
-// ---------------------------------------------------------------------------
-
-template <class T> class EtaMatrix {
-  public:
-  int col;
-  Vector<T> etadata;
-  
-  EtaMatrix(int c, Vector<T> &v) : col(c), etadata(v) {}
-
-  // required for list class
-  bool operator==(const EtaMatrix<T> &) const;
-  bool operator!=(const EtaMatrix<T> &) const;
-};
-
-// ---------------------------------------------------------------------------
-// Class LUdecomp
-// ---------------------------------------------------------------------------
-
-template <class T> class LUdecomp {
-private:
-  Tableau<T> &tab;
-  Basis &basis;
-
-  List< EtaMatrix<T> > L;
-  List< EtaMatrix<T> > U;
-  List< EtaMatrix<T> > E;
-  List< int > P;
-
-  Vector<T> scratch1; // scratch vectors so we don't reallocate them
-  Vector<T> scratch2; // everytime we do something.
-
-  int refactor_number;
-  int iterations;
-  int total_operations;
-
-  const LUdecomp<T> *parent;
-  int copycount;
-
-  // don't use this copy constructor
-  LUdecomp( const LUdecomp<T> &a);
-  // don't use the equals operator, use the Copy function instead
-  LUdecomp<T>& operator=(const LUdecomp<T>&);
-
-
-
+template <class T> class LUDecomposition {
 public:
-  class BadPivot : public Exception  {
+  class BadPivot final : public std::runtime_error {
   public:
-    virtual ~BadPivot() throw() { }
-    const char *what(void) const throw() { return "Bad pivot in LUdecomp"; }
-  };
-  class BadCount : public Exception  {
-  public:
-    virtual ~BadCount() throw() { }
-    const char *what(void) const throw() { return "Bad reference count in LUdecomp"; }
+    BadPivot() : std::runtime_error("Bad pivot in LUDecomposition") {}
+    ~BadPivot() noexcept override = default;
   };
 
-  // ------------------------
-  // Constructors, Destructor
-  // ------------------------
-    
+  /// @name Constructors and destructor
+  //@{
+  LUDecomposition(const LUDecomposition<T> &) = delete;
 
-  // copy constructor
-  // note:  Copying will fail an assertion if you try to update or delete
-  //        the original before the copy has been deleted, refactored
-  //        Or set to something else.
-  LUdecomp( const LUdecomp<T> &, Tableau<T> & );
+  /// Copy constructor. The copy shares `a`'s factorization state as of the
+  /// time of copying; subsequent updates to either are independent.
+  LUDecomposition(const LUDecomposition<T> &a, Tableau<T> &t);
 
-  // Decompose given matrix
-  LUdecomp( Tableau<T> &, int rfac = 0 ); 
+  /// Decompose given matrix
+  explicit LUDecomposition(Tableau<T> &, int rfac = 0);
 
-  // Destructor
-  ~LUdecomp();
+  /// Destructor
+  ~LUDecomposition() = default;
 
+  /// Don't use the equals operator, use the Copy function instead
+  LUDecomposition<T> &operator=(const LUDecomposition<T> &) = delete;
+  //@}
 
-  // --------------------
-  // Public Members
-  // --------------------
+  /// @name Operations
+  //@{
+  /// Copies the LUDecomposition given (except for the basis reference)
+  void Copy(const LUDecomposition<T> &, Tableau<T> &);
 
-  // copies the LUdecomp given (expect for the basis &).
-  void Copy( const LUdecomp<T> &, Tableau<T> & );
+  /// Replace (update) the column given with the vector given
+  void Update(int, int matcol); // matcol is the column number in the matrix
 
-  // replace (update) the column given with the vector given.
-  void update( int, int matcol ); // matcol is the column number in the matrix
+  /// Refactor
+  void Refactor();
 
-  // refactor 
-  void refactor();
-  
-  // solve: Bk d = a
-  void solve (const Vector<T> &, Vector<T> & ) const;
+  /// Solve: Bk d = a
+  void Solve(const Vector<T> &, Vector<T> &) const;
 
-  // solve: y Bk = c
-  void solveT( const Vector<T> &, Vector <T> & ) const;
+  /// Solve: y Bk = c
+  void SolveT(const Vector<T> &, Vector<T> &) const;
 
-  // set number of etamatrices added before refactoring;
-  // if number is set to zero, refactoring is done automatically.
-  // if number is < 0, no refactoring is done;
-  void SetRefactor( int );
-
-  //-------------------
-  // Private Members
-  //-------------------
+  /// Set number of eta matrices added before refactoring;
+  /// if number is set to zero, refactoring is done automatically;
+  /// if number is < 0, no refactoring is done
+  void SetRefactor(int a) { m_refactorInterval = a; }
+  //@}
 
 private:
-  
-  void FactorBasis();
+  struct EtaMatrix {
+    int col;
+    Vector<T> etadata;
+  };
 
-  void GaussElem( Matrix<T> &, int, int );
+  // Immutable node in a persistently-shared eta chain: forking is an O(1)
+  // shared_ptr copy of the tail, and appending never disturbs it.
+  struct EtaNode {
+    EtaMatrix eta;
+    std::shared_ptr<const EtaNode> prev;
+  };
 
-  bool CheckBasis();
+  // FactorBasis()'s output: expensive to compute, shared across copies.
+  struct BaseFactorization {
+    std::list<EtaMatrix> upperEtas;
+    std::vector<std::pair<int, EtaMatrix>> lowerFactors;
+  };
+
+  Tableau<T> &m_tableau;
+  Basis &m_basis;
+
+  std::shared_ptr<const BaseFactorization> m_base;
+  std::shared_ptr<const EtaNode> m_updateTail;
+
+  int m_refactorInterval;
+  int m_iterationsSinceRefactor;
+  int m_totalOperations;
+
+  BaseFactorization FactorBasis();
+
+  void GaussElem(Matrix<T> &, int, int);
+
   bool RefactorCheck();
 
-  void BTransE( Vector<T> & ) const;
-  void FTransE( Vector<T> & ) const;
-  void BTransU( Vector<T> & ) const;
-  void FTransU( Vector<T> & ) const;
-  void LPd_Trans( Vector<T> & ) const;
-  void yLP_Trans( Vector<T> & ) const;
+  void BTransE(Vector<T> &) const;
+  void FTransE(Vector<T> &) const;
+  void BTransU(Vector<T> &) const;
+  void FTransU(Vector<T> &) const;
+  void LPd_Trans(Vector<T> &) const;
+  void yLP_Trans(Vector<T> &) const;
 
-  void VectorEtaSolve( const Vector<T> &v,  
-		      const EtaMatrix<T> &, 
-		      Vector<T> &y ) const;
+  void VectorEtaSolve(const EtaMatrix &, Vector<T> &y) const;
+  void EtaVectorSolve(const EtaMatrix &, Vector<T> &d) const;
 
-  void EtaVectorSolve( const Vector<T> &v, 
-		      const EtaMatrix<T> &,
-		      Vector<T> &d ) const;
+  void yLP_mult(const Vector<T> &y, int j, Vector<T> &) const;
 
-  void yLP_mult( const Vector<T> &y, int j, Vector<T> &) const;
+  void LPd_mult(Vector<T> &d, int j, Vector<T> &) const;
 
-  void LPd_mult( Vector<T> &d, int j, Vector<T> &) const;
+}; // end of class LUDecomposition
 
+} // end namespace Gambit::linalg
 
-};  // end of class LUdecomp
-
-}  // end namespace Gambit::linalg
-
-}  // end namespace Gambit
- 
-#endif // LUDECOMP_H
-
-
-
-
-
-
-
-
-
-
+#endif // GAMBIT_SOLVERS_LINALG_LUDECOMP_H

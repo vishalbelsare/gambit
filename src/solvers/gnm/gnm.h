@@ -1,8 +1,8 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
-// FILE: library/include/gambit/nash/gnm.h
+// FILE: src/solvers/gnm/gnm.h
 // Compute Nash equilibria via the global Newton method
 //
 // This program is free software; you can redistribute it and/or modify
@@ -20,41 +20,72 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef GAMBIT_NASH_GNM_H
-#define GAMBIT_NASH_GNM_H
+#ifndef GAMBIT_SOLVERS_GNM_GNM_H
+#define GAMBIT_SOLVERS_GNM_GNM_H
 
-#include "games/nash.h"
+#include <variant>
+
+#include "solvers/nash.h"
 #include "solvers/gtracer/gtracer.h"
 
-namespace Gambit {
-namespace Nash {
+namespace Gambit::Nash {
 
-class NashGNMStrategySolver : public StrategySolver<double> {
-public:
-  NashGNMStrategySolver(shared_ptr<StrategyProfileRenderer<double> > p_onEquilibrium = 0,
-			bool p_verbose=false)
-    : StrategySolver<double>(p_onEquilibrium),
-      m_verbose(p_verbose)
-  { }
-  virtual ~NashGNMStrategySolver() { }
+const double GNM_LAMBDA_END_DEFAULT = -10.0;
+const int GNM_LOCAL_NEWTON_INTERVAL_DEFAULT = 3;
+const int GNM_LOCAL_NEWTON_MAXITS_DEFAULT = 10;
+const int GNM_STEPS_DEFAULT = 100;
 
-  List<MixedStrategyProfile<double> > Solve(const Game &p_game) const;
-  List<MixedStrategyProfile<double> > Solve(const Game &p_game,
-					    const MixedStrategyProfile<double> &p_pert) const;
-
-private:
-  bool m_verbose;
-  
-  List<MixedStrategyProfile<double> > Solve(const Game &p_game,
-					    shared_ptr<gametracer::gnmgame> A,
-					    const gametracer::cvector &p_pert) const;
-  shared_ptr<gametracer::gnmgame> BuildRepresentation(const Game &p_game) const;
-
-  static MixedStrategyProfile<double> ToProfile(const Game &p_game,
-						const gametracer::cvector &p_pert);
+struct GNMPerturbationEvent {
+  const MixedStrategyProfile<double> &profile;
 };
 
-}  // end namespace Gambit::Nash
-}  // end namespace Gambit
+struct GNMStartEvent {
+  const MixedStrategyProfile<double> &profile;
+};
 
-#endif  // GAMBIT_NASH_GNM_H
+struct GNMStepEvent {
+  const MixedStrategyProfile<double> &profile;
+  double lambda;
+};
+
+/// @brief Reports why GNM's path-following terminated, once at the end of the run
+struct GNMTerminationEvent {
+  gametracer::GNMTerminationReason reason;
+  std::string message;
+};
+
+using GNMEvent =
+    std::variant<GNMPerturbationEvent, GNMStartEvent, GNMStepEvent, GNMTerminationEvent>;
+using GNMEventCallbackType = std::function<void(const GNMEvent &)>;
+
+inline void NullGNMEventCallback(const GNMEvent &) {}
+
+/// @brief The result of computing Nash equilibria via the global Newton method
+struct GNMStrategyResult {
+  std::list<MixedStrategyProfile<double>> equilibria;
+  bool success{true};
+  /// Why the path-following run terminated; this is the same event reported to
+  /// GNMEventCallbackType via GNMTerminationEvent.  A value other than NoMoreBoundaries,
+  /// NoNextBoundary, or LambdaOutOfRange indicates a numerical breakdown, and success is false.
+  gametracer::GNMTerminationReason reason{gametracer::GNMTerminationReason::NoMoreBoundaries};
+};
+
+GNMStrategyResult
+GNMStrategySolve(const Game &p_game, double p_lambdaEnd, int p_steps, int p_localNewtonInterval,
+                 int p_localNewtonMaxits,
+                 StrategyCallbackType<double> p_onEquilibrium = NullStrategyCallback<double>,
+                 GNMEventCallbackType p_onEvent = NullGNMEventCallback,
+                 const CancelToken &p_cancel = CancelToken());
+
+/// @brief Compute the mixed strategy equilibria accessible via the initial ray determined
+///        by \p p_profile using the Global Newton method
+GNMStrategyResult
+GNMStrategySolve(const MixedStrategyProfile<double> &p_profile, double p_lambdaEnd, int p_steps,
+                 int p_localNewtonInterval, int p_localNewtonMaxits,
+                 StrategyCallbackType<double> p_onEquilibrium = NullStrategyCallback<double>,
+                 GNMEventCallbackType p_onEvent = NullGNMEventCallback,
+                 const CancelToken &p_cancel = CancelToken());
+
+} // end namespace Gambit::Nash
+
+#endif // GAMBIT_SOLVERS_GNM_GNM_H

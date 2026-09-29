@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dlnash.cc
 // Dialog for selecting algorithms to compute Nash equilibria
@@ -20,21 +20,28 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
+#include <concepts>
 #include <sstream>
+#include <stdexcept>
+#include <type_traits>
 
-#include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
+#endif // WX_PRECOMP
 #include <wx/stdpaths.h>
+
+#include "games.h"
+#include "games/gametree.h"
 
 #include "dlnash.h"
 
+namespace Gambit::GUI {
 static wxString s_recommended(wxT("with Gambit's recommended method"));
 static wxString s_enumpure(wxT("by looking for pure strategy equilibria"));
 static wxString s_enummixed(wxT("by enumerating extreme points"));
 static wxString s_enumpoly(wxT("by solving systems of polynomial equations"));
 static wxString s_gnm(wxT("by global Newton tracing"));
+static wxString s_hp(wxT("by the Herings-Peeters homotopy"));
 static wxString s_ipa(wxT("by iterated polymatrix approximation"));
 static wxString s_lp(wxT("by solving a linear program"));
 static wxString s_lcp(wxT("by solving a linear complementarity program"));
@@ -42,117 +49,384 @@ static wxString s_liap(wxT("by minimizing the Lyapunov function"));
 static wxString s_logit(wxT("by tracing logit equilibria"));
 static wxString s_simpdiv(wxT("by simplicial subdivision"));
 
-gbtNashChoiceDialog::gbtNashChoiceDialog(wxWindow *p_parent, 
-					 gbtGameDocument *p_doc)
-  : wxDialog(p_parent, wxID_ANY, wxT("Compute Nash equilibria"), wxDefaultPosition),
+namespace {
+
+NashEquilibriumTarget GetTarget(int p_selection)
+{
+  if (p_selection == 0) {
+    return NashEquilibriumTarget::One;
+  }
+  if (p_selection == 1) {
+    return NashEquilibriumTarget::Some;
+  }
+  return NashEquilibriumTarget::All;
+}
+
+NashMethodSpec ResolveMethod(const wxString &p_method, NashEquilibriumTarget p_target,
+                             const Game &p_game)
+{
+  if (p_method == s_recommended) {
+    if (p_target == NashEquilibriumTarget::One) {
+      if (p_game->NumPlayers() == 2 && p_game->IsConstSum()) {
+        return LPNashSpec{};
+      }
+      return LogitNashSpec{};
+    }
+    if (p_target == NashEquilibriumTarget::Some) {
+      if (p_game->NumPlayers() == 2) {
+        return LCPNashSpec{};
+      }
+      return SimpdivNashSpec{};
+    }
+    return EnumMixedNashSpec{};
+  }
+  if (p_method == s_enumpure) {
+    return EnumPureNashSpec{};
+  }
+  if (p_method == s_enummixed) {
+    return EnumMixedNashSpec{};
+  }
+  if (p_method == s_enumpoly) {
+    if (p_target == NashEquilibriumTarget::One) {
+      return EnumPolyNashSpec{.stopAfter = 1};
+    }
+    return EnumPolyNashSpec{};
+  }
+  if (p_method == s_gnm) {
+    return GNMNashSpec{};
+  }
+  if (p_method == s_hp) {
+    return HPNashSpec{};
+  }
+  if (p_method == s_ipa) {
+    return IPANashSpec{};
+  }
+  if (p_method == s_lp) {
+    return LPNashSpec{};
+  }
+  if (p_method == s_lcp) {
+    return LCPNashSpec{};
+  }
+  if (p_method == s_liap) {
+    return LiapNashSpec{};
+  }
+  if (p_method == s_logit) {
+    return LogitNashSpec{};
+  }
+  if (p_method == s_simpdiv) {
+    if (p_target == NashEquilibriumTarget::One) {
+      return SimpdivNashSpec{.startingPoints = 1};
+    }
+    return SimpdivNashSpec{};
+  }
+  throw std::logic_error("Unknown Nash equilibrium method");
+}
+
+template <class M>
+concept StrategicMethod =
+    std::same_as<M, EnumPureNashSpec> || std::same_as<M, EnumMixedNashSpec> ||
+    std::same_as<M, GNMNashSpec> || std::same_as<M, HPNashSpec> || std::same_as<M, IPANashSpec> ||
+    std::same_as<M, LiapNashSpec> || std::same_as<M, SimpdivNashSpec>;
+
+template <class M>
+concept RationalOutputMethod =
+    std::same_as<M, EnumPureNashSpec> || std::same_as<M, EnumMixedNashSpec> ||
+    std::same_as<M, LPNashSpec> || std::same_as<M, LCPNashSpec>;
+
+bool RequiresStrategicRepresentation(const NashMethodSpec &p_method)
+{
+  return std::visit([]<typename Method>(const Method &) { return StrategicMethod<Method>; },
+                    p_method);
+}
+
+bool UsesRationalOutput(const NashMethodSpec &p_method)
+{
+  return std::visit([]<typename Method>(const Method &) { return RationalOutputMethod<Method>; },
+                    p_method);
+}
+
+wxString ExternalCommand(const NashComputationSpec &p_spec)
+{
+#ifdef __WXMAC__
+  wxString prefix = wxStandardPaths::Get().GetExecutablePath() + wxT("-");
+#else
+  wxString prefix = wxT("gambit-");
+#endif
+  const wxString strategic =
+      p_spec.representation == NashRepresentation::Strategic ? wxT(" -S") : wxString{};
+
+  return std::visit(
+      [&]<typename Method>(const Method &method) {
+        if constexpr (std::is_same_v<Method, EnumPureNashSpec>) {
+          return prefix + wxT("enumpure") + strategic;
+        }
+        else if constexpr (std::is_same_v<Method, EnumMixedNashSpec>) {
+          return prefix + wxT("enummixed");
+        }
+        else if constexpr (std::is_same_v<Method, EnumPolyNashSpec>) {
+          wxString command = wxString::Format("enumpoly -d 10 -m %.17g", method.maxRegret);
+          if (method.stopAfter.has_value()) {
+            command += wxString::Format(" -e %llu",
+                                        static_cast<unsigned long long>(method.stopAfter.value()));
+          }
+          return prefix + command + strategic;
+        }
+        else if constexpr (std::is_same_v<Method, GNMNashSpec>) {
+          return prefix + wxString::Format("gnm -d 10 -n %d -m %.17g -c %d -f %d -i %d",
+                                           method.perturbations, method.lambdaEnd, method.steps,
+                                           method.localNewtonInterval,
+                                           method.localNewtonMaxIterations);
+        }
+        else if constexpr (std::is_same_v<Method, HPNashSpec>) {
+          return prefix +
+                 wxString::Format("hp -d 10 -n %d -m %.17g", method.priors, method.maxRegret);
+        }
+        else if constexpr (std::is_same_v<Method, IPANashSpec>) {
+          return prefix + wxString::Format("ipa -d 10 -n %d", method.perturbations);
+        }
+        else if constexpr (std::is_same_v<Method, LPNashSpec>) {
+          return prefix + wxT("lp") + strategic;
+        }
+        else if constexpr (std::is_same_v<Method, LCPNashSpec>) {
+          wxString command = wxString::Format("lcp -r %d", method.maxDepth);
+          if (method.stopAfter.has_value()) {
+            command += wxString::Format(" -e %llu",
+                                        static_cast<unsigned long long>(method.stopAfter.value()));
+          }
+          return prefix + command + strategic;
+        }
+        else if constexpr (std::is_same_v<Method, LiapNashSpec>) {
+          return prefix + wxString::Format("liap -d 10 -n %d -i %d -m %.17g",
+                                           method.startingPoints, method.maxIterations,
+                                           method.maxRegret);
+        }
+        else if constexpr (std::is_same_v<Method, LogitNashSpec>) {
+          return prefix +
+                 wxString::Format("logit -e -d 10 -m %.17g -s %.17g -a %.17g", method.maxRegret,
+                                  method.firstStep, method.maxAcceleration) +
+                 strategic;
+        }
+        else {
+          std::ostringstream regret;
+          regret << method.maxRegret;
+          return prefix +
+                 wxString::Format("simpdiv -d 10 -n %d -r %d -g %d -m ", method.startingPoints,
+                                  method.randomDenominator, method.gridResize) +
+                 wxString(regret.str());
+        }
+      },
+      p_spec.method);
+}
+
+wxString MethodDescription(const NashMethodSpec &p_method)
+{
+  return std::visit(
+      []<typename Method>(const Method &method) {
+        if constexpr (std::is_same_v<Method, EnumPureNashSpec>) {
+          return wxT("in pure strategies");
+        }
+        else if constexpr (std::is_same_v<Method, EnumMixedNashSpec>) {
+          return wxT("by enumeration of mixed-strategy extreme points");
+        }
+        else if constexpr (std::is_same_v<Method, EnumPolyNashSpec>) {
+          return wxT("by solving polynomial systems");
+        }
+        else if constexpr (std::is_same_v<Method, GNMNashSpec>) {
+          return wxT("by global Newton tracing");
+        }
+        else if constexpr (std::is_same_v<Method, HPNashSpec>) {
+          return wxT("by the Herings-Peeters homotopy");
+        }
+        else if constexpr (std::is_same_v<Method, IPANashSpec>) {
+          return wxT("by iterated polymatrix approximation");
+        }
+        else if constexpr (std::is_same_v<Method, LPNashSpec>) {
+          return wxT("by solving a linear program");
+        }
+        else if constexpr (std::is_same_v<Method, LCPNashSpec>) {
+          return wxT("by solving a linear complementarity program");
+        }
+        else if constexpr (std::is_same_v<Method, LiapNashSpec>) {
+          return wxT("by function minimization");
+        }
+        else if constexpr (std::is_same_v<Method, LogitNashSpec>) {
+          return wxT("by logit tracing");
+        }
+        else {
+          return wxT("by simplicial subdivision");
+        }
+      },
+      p_method);
+}
+
+wxString ParameterDescription(const NashMethodSpec &p_method)
+{
+  return std::visit(
+      []<typename Method>(const Method &method) {
+        if constexpr (std::is_same_v<Method, EnumPolyNashSpec>) {
+          if (method.stopAfter.has_value() && method.stopAfter.value() == 1) {
+            return wxString::Format(" (stop after one equilibrium; maximum regret %.4g)",
+                                    method.maxRegret);
+          }
+          return wxString::Format(" (all supports; maximum regret %.4g)", method.maxRegret);
+        }
+        else if constexpr (std::is_same_v<Method, GNMNashSpec>) {
+          return wxString::Format(
+              " (%d perturbation; ending lambda %.4g; %d steps per support cell; local Newton "
+              "every %d steps, at most %d iterations)",
+              method.perturbations, method.lambdaEnd, method.steps, method.localNewtonInterval,
+              method.localNewtonMaxIterations);
+        }
+        else if constexpr (std::is_same_v<Method, HPNashSpec>) {
+          return wxString::Format(" (%d random priors; maximum regret %.4g)", method.priors,
+                                  method.maxRegret);
+        }
+        else if constexpr (std::is_same_v<Method, IPANashSpec>) {
+          return wxString::Format(" (%d perturbation)", method.perturbations);
+        }
+        else if constexpr (std::is_same_v<Method, LCPNashSpec>) {
+          return wxString(wxT(" (all accessible equilibria; unlimited recursion depth)"));
+        }
+        else if constexpr (std::is_same_v<Method, LiapNashSpec>) {
+          return wxString::Format(" (%d random starting points; at most %d iterations; maximum "
+                                  "regret %.4g)",
+                                  method.startingPoints, method.maxIterations, method.maxRegret);
+        }
+        else if constexpr (std::is_same_v<Method, LogitNashSpec>) {
+          return wxString::Format(
+              " (maximum regret %.4g; initial step %.4g; maximum acceleration %.4g)",
+              method.maxRegret, method.firstStep, method.maxAcceleration);
+        }
+        else if constexpr (std::is_same_v<Method, SimpdivNashSpec>) {
+          std::ostringstream regret;
+          regret << method.maxRegret;
+          return wxString::Format(" (%d random starting points with denominator %d; grid resize "
+                                  "factor %d; maximum regret ",
+                                  method.startingPoints, method.randomDenominator,
+                                  method.gridResize) +
+                 wxString(regret.str()) + wxT(")");
+        }
+        else {
+          return wxString{};
+        }
+      },
+      p_method);
+}
+
+} // namespace
+
+NashChoiceDialog::NashChoiceDialog(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc)
+  : wxDialog(p_parent, wxID_ANY, wxT("Compute Nash equilibria"), wxDefaultPosition, wxDefaultSize,
+             wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
     m_doc(p_doc)
 {
-  wxBoxSizer *topSizer = new wxBoxSizer(wxVERTICAL);
+  const int S = FromDIP(5);
+
+  auto *topSizer = new wxBoxSizer(wxVERTICAL);
 
   if (m_doc->GetGame()->NumPlayers() == 2) {
-    wxString countChoices[] = { wxT("Compute one Nash equilibrium"),
-				wxT("Compute as many Nash equilibria as possible"),
-				wxT("Compute all Nash equilibria") };
-    m_countChoice = new wxChoice(this, wxID_ANY,
-				 wxDefaultPosition, wxDefaultSize,
-				 3, countChoices);
+    wxString countChoices[] = {wxT("Compute one Nash equilibrium"),
+                               wxT("Compute some Nash equilibria"),
+                               wxT("Compute all Nash equilibria")};
+    m_countChoice =
+        new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 3, countChoices);
   }
   else {
-    wxString countChoices[] = { wxT("Compute one Nash equilibrium"),
-				wxT("Compute as many Nash equilibria as possible") };
-    m_countChoice = new wxChoice(this, wxID_ANY,
-				 wxDefaultPosition, wxDefaultSize,
-				 2, countChoices);
+    wxString countChoices[] = {wxT("Compute one Nash equilibrium"),
+                               wxT("Compute some Nash equilibria")};
+    m_countChoice =
+        new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, countChoices);
   }
   m_countChoice->SetSelection(0);
 
   Connect(m_countChoice->GetId(), wxEVT_COMMAND_CHOICE_SELECTED,
-	  wxCommandEventHandler(gbtNashChoiceDialog::OnCount));
-  topSizer->Add(m_countChoice, 0, wxALL | wxEXPAND, 5);
+          wxCommandEventHandler(NashChoiceDialog::OnCount));
+  topSizer->Add(m_countChoice, 0, wxALL | wxEXPAND, S);
 
-  if (p_doc->NumPlayers() == 2 && m_doc->IsConstSum()) {
-    wxString methodChoices[] = { s_recommended, s_lp, s_simpdiv, s_logit };
-    m_methodChoice = new wxChoice(this, wxID_ANY, 
-				  wxDefaultPosition, wxDefaultSize,
-				  4, methodChoices);
+  if (p_doc->GetGame()->NumPlayers() == 2 && m_doc->GetGame()->IsConstSum()) {
+    wxString methodChoices[] = {s_recommended, s_lp, s_simpdiv, s_logit, s_enumpoly};
+    m_methodChoice =
+        new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 5, methodChoices);
   }
   else {
-    wxString methodChoices[] = { s_recommended, s_simpdiv, s_logit };
-    m_methodChoice = new wxChoice(this, wxID_ANY, 
-				  wxDefaultPosition, wxDefaultSize,
-				  3, methodChoices);
+    wxString methodChoices[] = {s_recommended, s_simpdiv, s_logit, s_enumpoly};
+    m_methodChoice =
+        new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 4, methodChoices);
   }
   m_methodChoice->SetSelection(0);
-  topSizer->Add(m_methodChoice, 0, wxALL | wxEXPAND, 5);
+  topSizer->Add(m_methodChoice, 0, wxALL | wxEXPAND, S);
 
-  if (m_doc->IsTree()) {
-    wxString repChoices[] = { wxT("using the extensive game"),
-			      wxT("using the strategic game") };
-    m_repChoice = new wxChoice(this, wxID_ANY,
-			       wxDefaultPosition, wxDefaultSize,
-			       2, repChoices);
+  if (As<GameTreeRep>(m_doc->GetGame())) {
+    wxString repChoices[] = {wxT("using the extensive game"), wxT("using the strategic game")};
+    m_repChoice = new wxChoice(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, 2, repChoices);
     m_repChoice->SetSelection(0);
-    topSizer->Add(m_repChoice, 0, wxALL | wxEXPAND, 5);
+    topSizer->Add(m_repChoice, 0, wxALL | wxEXPAND, S);
 
     // We only need to respond to changes in method when we have an
     // extensive game
     Connect(m_methodChoice->GetId(), wxEVT_COMMAND_CHOICE_SELECTED,
-	    wxCommandEventHandler(gbtNashChoiceDialog::OnMethod));
+            wxCommandEventHandler(NashChoiceDialog::OnMethod));
   }
   else {
-    m_repChoice = 0;
+    m_repChoice = nullptr;
   }
 
-  wxBoxSizer *buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-  buttonSizer->Add(new wxButton(this, wxID_CANCEL, _("Cancel")), 0, wxALL, 5);
-  wxButton *okButton = new wxButton(this, wxID_OK, _("OK"));
-  okButton->SetDefault();
-  buttonSizer->Add(okButton, 0, wxALL, 5);
-  topSizer->Add(buttonSizer, 0, wxALL | wxALIGN_RIGHT, 5);
+  UpdateRepresentationChoice();
+
+  if (auto *buttonSizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL)) {
+    topSizer->Add(buttonSizer, 0, wxALL | wxEXPAND, S);
+  }
 
   SetSizer(topSizer);
   topSizer->Fit(this);
   topSizer->SetSizeHints(this);
-  Layout();
+  wxTopLevelWindowBase::Layout();
   CenterOnParent();
 }
 
-void gbtNashChoiceDialog::OnCount(wxCommandEvent &p_event)
+void NashChoiceDialog::OnCount(wxCommandEvent &p_event)
 {
   m_methodChoice->Clear();
   m_methodChoice->Append(s_recommended);
 
   if (p_event.GetSelection() == 0) {
-    if (m_doc->NumPlayers() == 2 && m_doc->IsConstSum()) {
+    if (m_doc->GetGame()->NumPlayers() == 2 && m_doc->GetGame()->IsConstSum()) {
       m_methodChoice->Append(s_lp);
     }
     m_methodChoice->Append(s_simpdiv);
     m_methodChoice->Append(s_logit);
+    m_methodChoice->Append(s_enumpoly);
   }
   else if (p_event.GetSelection() == 1) {
-    if (m_doc->NumPlayers() == 2) {
+    if (m_doc->GetGame()->NumPlayers() == 2) {
       m_methodChoice->Append(s_lcp);
     }
     m_methodChoice->Append(s_enumpure);
     m_methodChoice->Append(s_liap);
     m_methodChoice->Append(s_gnm);
     m_methodChoice->Append(s_ipa);
+    m_methodChoice->Append(s_hp);
     m_methodChoice->Append(s_enumpoly);
   }
   else {
-    if (m_doc->NumPlayers() == 2) {
+    if (m_doc->GetGame()->NumPlayers() == 2) {
       m_methodChoice->Append(s_enummixed);
     }
   }
   m_methodChoice->SetSelection(0);
+  UpdateRepresentationChoice();
 }
 
-void gbtNashChoiceDialog::OnMethod(wxCommandEvent &p_event)
-{
-  wxString method = m_methodChoice->GetString(p_event.GetSelection());
+void NashChoiceDialog::OnMethod(wxCommandEvent &) { UpdateRepresentationChoice(); }
 
-  if (method == s_simpdiv || method == s_enummixed ||
-      method == s_gnm || method == s_ipa) {
+void NashChoiceDialog::UpdateRepresentationChoice()
+{
+  if (!m_repChoice) {
+    return;
+  }
+  const auto method = ResolveMethod(m_methodChoice->GetStringSelection(),
+                                    GetTarget(m_countChoice->GetSelection()), m_doc->GetGame());
+  if (RequiresStrategicRepresentation(method)) {
     m_repChoice->SetSelection(1);
     m_repChoice->Enable(false);
   }
@@ -161,152 +435,53 @@ void gbtNashChoiceDialog::OnMethod(wxCommandEvent &p_event)
   }
 }
 
-bool gbtNashChoiceDialog::UseStrategic(void) const
+bool NashChoiceDialog::UseStrategic() const
 {
-  return (m_repChoice == 0 ||
-	  m_repChoice->GetSelection() == 1);
+  return GetComputation().representation == NashRepresentation::Strategic;
 }
 
-gbtAnalysisOutput *gbtNashChoiceDialog::GetCommand(void) const
+NashComputationSpec NashChoiceDialog::GetComputation() const
 {
-  bool useEfg = m_repChoice && m_repChoice->GetSelection() == 0;
-  gbtAnalysisOutput *cmd = 0; 
-
-  wxString method = m_methodChoice->GetStringSelection();
-
-  wxString prefix, options, game, count;
-#ifdef __WXMAC__
-  // Look in the app bundle.  The command-line tools should be placed
-  // in the same folder inside the app bundle as the GUI executable.
-  // GetExecutablePath() returns the full path to the GUI executable,
-  // including the 'gambit', so all we need is the dash to form the prefix.
-  prefix = wxStandardPaths::Get().GetExecutablePath() + wxT("-");
-#else
-  prefix = wxT("gambit-");
-#endif  // __WXMAC__
-
-  if (useEfg) {
-    game = wxT("in extensive game");
-  }
-  else {
-    options = wxT(" -S ");
-    game = wxT("in strategic game");
-  }
-
-  if (m_countChoice->GetSelection() == 0) {
-    count = wxT("One equilibrium");
-  }
-  else if (m_countChoice->GetSelection() == 1) {
-    count = wxT("Some equilibria");
-  }
-  else {
-    count = wxT("All equilibria");
-  }
-
-  if (method == s_recommended) {
-    if (m_countChoice->GetSelection() == 0) {
-      if (m_doc->NumPlayers() == 2 && m_doc->IsConstSum()) {
-	cmd = new gbtAnalysisProfileList<Rational>(m_doc, useEfg);
-	cmd->SetCommand(prefix + wxT("lp") + options);
-	cmd->SetDescription(wxT("One equilibrium by solving a linear program ")
-			    + game);
-      }
-      else {
-	cmd = new gbtAnalysisProfileList<double>(m_doc, useEfg);
-	cmd->SetCommand(prefix + wxT("logit -e -d 10"));
-	cmd->SetDescription(wxT("One equilibrium by logit tracing ") + game);
-      }
-    }
-    else if (m_countChoice->GetSelection() == 1) {
-      if (m_doc->NumPlayers() == 2) {
-	cmd = new gbtAnalysisProfileList<Rational>(m_doc, useEfg);
-	cmd->SetCommand(prefix + wxT("lcp") + options);
-	cmd->SetDescription(wxT("Some equilibria by solving a linear ")
-			       wxT("complementarity program ") + game);
-      }
-      else {
-	cmd = new gbtAnalysisProfileList<double>(m_doc, useEfg);
-	cmd->SetCommand(prefix + wxT("liap -d 10") + options);
-	cmd->SetDescription(wxT("Some equilibria by function minimization ") +
-			    game);
-      }
-    }
-    else {
-      if (m_doc->NumPlayers() == 2) {
-	cmd = new gbtAnalysisProfileList<Rational>(m_doc, false);
-	cmd->SetCommand(prefix + wxT("enummixed"));
-	cmd->SetDescription(wxT("All equilibria by enumeration of mixed ")
-			       wxT("strategies in strategic game"));
-      }
-      else {
-	cmd = new gbtAnalysisProfileList<double>(m_doc, useEfg);
-	cmd->SetCommand(prefix + wxT("enumpoly -d 10") + options);
-	cmd->SetDescription(wxT("All equilibria by solving polynomial ")
-			       wxT("systems ") + game);
-      }
-    }
-  }
-  else if (method == s_enumpure) {
-    cmd = new gbtAnalysisProfileList<Rational>(m_doc, useEfg);
-    cmd->SetCommand(prefix + wxT("enumpure") + options);
-    cmd->SetDescription(count + wxT(" in pure strategies ") + game);
-  }
-  else if (method == s_enummixed) {
-    cmd = new gbtAnalysisProfileList<Rational>(m_doc, false);
-    cmd->SetCommand(prefix + wxT("enummixed") + options);
-    cmd->SetDescription(count + 
-			wxT(" by enumeration of mixed strategies ")
-			    wxT("in strategic game"));
-  }
-  else if (method == s_enumpoly) {
-    cmd = new gbtAnalysisProfileList<double>(m_doc, useEfg);
-    cmd->SetCommand(prefix + wxT("enumpoly -d 10") + options);
-    cmd->SetDescription(count + wxT(" by solving polynomial systems ") +
-		       game);
-  }
-  else if (method == s_gnm) {
-    cmd = new gbtAnalysisProfileList<double>(m_doc, false);
-    cmd->SetCommand(prefix + wxT("gnm -d 10") + options);
-    cmd->SetDescription(count + wxT(" by global Newton tracing ")
-			wxT("in strategic game"));
-  }
-  else if (method == s_ipa) {
-    cmd = new gbtAnalysisProfileList<double>(m_doc, false);
-    cmd->SetCommand(prefix + wxT("ipa -d 10") + options);
-    cmd->SetDescription(count + wxT(" by iterated polymatrix approximation ")
-			wxT("in strategic game"));
-  }
-  else if (method == s_lp) {
-    cmd = new gbtAnalysisProfileList<Rational>(m_doc, useEfg);
-    cmd->SetCommand(prefix + wxT("lp") + options);
-    cmd->SetDescription(count + wxT(" by solving a linear program ") + game);
-  }
-  else if (method == s_lcp) {
-    cmd = new gbtAnalysisProfileList<Rational>(m_doc, useEfg);
-    cmd->SetCommand(prefix + wxT("lcp") + options);
-    cmd->SetDescription(count + wxT(" by solving a linear complementarity ")
-				   wxT("program ") + game);
-  }
-  else if (method == s_liap) {
-    cmd = new gbtAnalysisProfileList<double>(m_doc, useEfg);
-    cmd->SetCommand(prefix + wxT("liap -d 10") + options);
-    cmd->SetDescription(count + wxT(" by function minimization ") + game);
-  }
-  else if (method == s_logit) {
-    cmd = new gbtAnalysisProfileList<double>(m_doc, useEfg);
-    cmd->SetCommand(prefix + wxT("logit -e -d 10") + options);
-    cmd->SetDescription(count + wxT(" by logit tracing ") + game); 
-  }
-  else if (method == s_simpdiv) {
-    cmd = new gbtAnalysisProfileList<double>(m_doc, false);
-    cmd->SetCommand(prefix + wxT("simpdiv") + options);
-    cmd->SetDescription(count + wxT(" by simplicial subdivision ")
-				    wxT("in strategic game"));
-  }
-  else {
-    // Shouldn't happen!
-  }
-
-  return cmd;
+  const auto target = GetTarget(m_countChoice->GetSelection());
+  auto method = ResolveMethod(m_methodChoice->GetStringSelection(), target, m_doc->GetGame());
+  const auto representation =
+      !m_repChoice || m_repChoice->GetSelection() == 1 || RequiresStrategicRepresentation(method)
+          ? NashRepresentation::Strategic
+          : NashRepresentation::Behavior;
+  return {representation, target, std::move(method),
+          m_methodChoice->GetStringSelection() == s_recommended};
 }
 
+std::shared_ptr<AnalysisOutput> NashChoiceDialog::GetCommand() const
+{
+  const auto computation = GetComputation();
+  const bool useBehavior = computation.representation == NashRepresentation::Behavior;
+  std::shared_ptr<AnalysisOutput> output;
+  if (UsesRationalOutput(computation.method)) {
+    output = std::make_shared<AnalysisProfileList<Rational>>(m_doc.get(), useBehavior);
+  }
+  else {
+    output = std::make_shared<AnalysisProfileList<double>>(m_doc.get(), useBehavior);
+  }
+
+  wxString count;
+  switch (computation.target) {
+  case NashEquilibriumTarget::One:
+    count = wxT("One equilibrium ");
+    break;
+  case NashEquilibriumTarget::Some:
+    count = wxT("Some equilibria ");
+    break;
+  case NashEquilibriumTarget::All:
+    count = wxT("All equilibria ");
+    break;
+  }
+  const wxString representation =
+      useBehavior ? wxT(" in extensive game") : wxT(" in strategic game");
+  output->SetComputationSpec(computation);
+  output->SetCommand(ExternalCommand(computation));
+  output->SetDescription(count + MethodDescription(computation.method) +
+                         ParameterDescription(computation.method) + representation);
+  return output;
+}
+} // namespace Gambit::GUI

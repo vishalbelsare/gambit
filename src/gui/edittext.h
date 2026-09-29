@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/edittext.h
 // A widget that functions as an editable wxStaticText
@@ -20,24 +20,23 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef EDITTEXT_H
-#define EDITTEXT_H
+#ifndef GAMBIT_GUI_EDITTEXT_H
+#define GAMBIT_GUI_EDITTEXT_H
 
+#include "editlabel.h"
+
+namespace Gambit::GUI {
 //!
-//! A gbtStaticTextButton is a wxStaticText object that generates a
+//! A StaticTextButton is a wxStaticText object that generates a
 //! button click event when it is left-clicked
 //!
-class gbtStaticTextButton : public wxStaticText {
-private:
+class StaticTextButton final : public wxStaticText {
   // Event handlers
   void OnLeftClick(wxMouseEvent &);
-  
+
 public:
-  gbtStaticTextButton(wxWindow *p_parent, int p_id,
-		      const wxString &,
-		      const wxPoint & = wxDefaultPosition, 
-		      const wxSize & = wxDefaultSize,
-		      long = 0);
+  StaticTextButton(wxWindow *p_parent, wxWindowID p_id, const wxString &,
+                   const wxPoint & = wxDefaultPosition, const wxSize & = wxDefaultSize, long = 0);
 
   DECLARE_EVENT_TABLE()
 };
@@ -46,10 +45,12 @@ public:
 //! This control looks like a wxStaticText, but when clicked it shows
 //! a wxTextCtrl to edit the value.
 //!
-class gbtEditableText : public wxPanel {
-private:
-  gbtStaticTextButton *m_staticText;
-  wxTextCtrl *m_textCtrl;
+class EditableLabelText : public wxPanel {
+  StaticTextButton *m_staticText;
+  LabelTextCtrl *m_textCtrl;
+
+  wxString m_committedValue;
+  bool m_endingEdit = false;
 
   /// @name Event handlers
   //@{
@@ -57,27 +58,30 @@ private:
   void OnClick(wxCommandEvent &);
   /// Called when the text control is dismissed via enter
   void OnAccept(wxCommandEvent &);
+  /// Called when the text control loses focus
+  void OnTextKillFocus(wxFocusEvent &);
+  /// Called to intercept Escape while editing
+  void OnTextCharHook(wxKeyEvent &);
   //@}
+
+  void AcceptEdit();
+  void CancelEdit();
 
 public:
-  gbtEditableText(wxWindow *p_parent, int p_id,
-		  const wxString &p_value,
-		  const wxPoint &p_position,
-		  const wxSize &p_size);
+  EditableLabelText(wxWindow *p_parent, int p_id, const wxString &p_value,
+                    const wxPoint &p_position, const wxSize &p_size);
 
-  bool IsEditing(void) const { return GetSizer()->IsShown(m_textCtrl); }
-  void BeginEdit(void);
+  bool IsEditing() const { return GetSizer()->IsShown(m_textCtrl); }
+  void BeginEdit();
   void EndEdit(bool p_accept = true);
 
-  wxString GetValue(void) const;
+  wxString GetValue() const;
   void SetValue(const wxString &p_value);
 
-  // @name Overriding wxWindow methods
-  //@{
-  bool SetForegroundColour(const wxColour &);
-  bool SetBackgroundColour(const wxColour &);
-  bool SetFont(const wxFont &);
-  //@}
-}; 
+  bool SetForegroundColour(const wxColour &) override;
+  bool SetBackgroundColour(const wxColour &) override;
+  bool SetFont(const wxFont &) override;
+};
+} // namespace Gambit::GUI
 
-#endif // EDITTEXT_H
+#endif // GAMBIT_GUI_EDITTEXT_H

@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/nfgpanel.h
 // Panel to display normal form games in tabular format
@@ -20,33 +20,30 @@
 // Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
 //
 
-#ifndef NFGPANEL_H
-#define NFGPANEL_H
-
-#include "wx/sheet/sheet.h"        // for wxSheet
+#ifndef GAMBIT_GUI_NFGPANEL_H
+#define GAMBIT_GUI_NFGPANEL_H
 
 class wxPrintout;
-class gbtTableWidget;
-class gbtTablePlayerToolbar;
 
-class gbtNfgPanel : public wxPanel, public gbtGameView {
-private:
+namespace Gambit::GUI {
+class TableWidget;
+
+class NfgPanel final : public wxPanel, public GameView {
   wxWindow *m_dominanceToolbar;
-  gbtTablePlayerToolbar *m_playerToolbar;
-  gbtTableWidget *m_tableWidget;
+  TableWidget *m_tableWidget;
 
   void OnToolsDominance(wxCommandEvent &);
 
 public:
-  gbtNfgPanel(wxWindow *p_parent, gbtGameDocument *p_doc);
-  virtual ~gbtNfgPanel() { }
+  NfgPanel(wxWindow *p_parent, const std::shared_ptr<GameDocument> &p_doc, bool p_showDominance);
+  ~NfgPanel() override = default;
 
-  bool IsDominanceShown(void) const { return m_dominanceToolbar->IsShown(); }
+  bool IsDominanceShown() const { return m_dominanceToolbar->IsShown(); }
 
   /// @name Exporting/printing graphics
   //@{
   /// Creates a printout object of the game as currently displayed
-  wxPrintout *GetPrintout(void);
+  wxPrintout *GetPrintout();
   /// Creates a bitmap of the game as currently displayed
   bool GetBitmap(wxBitmap &, int marginX, int marginY);
   /// Outputs the game as currently displayed to a SVG file
@@ -55,17 +52,12 @@ public:
   void RenderGame(wxDC &p_dc, int marginX, int marginY);
   //@}
 
-  // Overriding gbtGameView members
-  void OnUpdate(void);
-  void PostPendingChanges(void);
+  // Overriding GameView members
+  void OnUpdate() override;
+  void PostPendingChanges() override;
 
   DECLARE_EVENT_TABLE()
 };
+} // namespace Gambit::GUI
 
-#endif  // NFGPANEL_H
-
-
-
-
-
-
+#endif // GAMBIT_GUI_NFGPANEL_H

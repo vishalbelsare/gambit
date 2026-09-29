@@ -1,6 +1,6 @@
 //
 // This file is part of Gambit
-// Copyright (c) 1994-2016, The Gambit Project (http://www.gambit-project.org)
+// Copyright (c) 1994-2026, The Gambit Project (https://www.gambit-project.org)
 //
 // FILE: src/gui/dleditnode.cc
 // Dialog for viewing and editing properties of a node
@@ -23,65 +23,69 @@
 #include <wx/wxprec.h>
 #ifndef WX_PRECOMP
 #include <wx/wx.h>
-#endif  // WX_PRECOMP
-#include "gambit.h"
+#endif // WX_PRECOMP
+#include <wx/richmsgdlg.h>
+#include "games.h"
+#include "games/gametree.h"
 #include "dleditnode.h"
 
+namespace Gambit::GUI {
 //======================================================================
-//                      class dialogEditNode
+//                      class EditNodeDialog
 //======================================================================
 
-dialogEditNode::dialogEditNode(wxWindow *p_parent, Gambit::GameNode p_node)
-  : wxDialog(p_parent, wxID_ANY, _("Node properties"), wxDefaultPosition), 
+EditNodeDialog::EditNodeDialog(wxWindow *p_parent, const GameNode &p_node)
+  : wxDialog(p_parent, wxID_ANY, _("Node properties"), wxDefaultPosition, wxDefaultSize,
+             wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER),
     m_node(p_node)
 {
-  wxBoxSizer *topSizer = new wxBoxSizer(wxVERTICAL);
+  const int S = FromDIP(5);
 
-  wxBoxSizer *labelSizer = new wxBoxSizer(wxHORIZONTAL);
-  labelSizer->Add(new wxStaticText(this, wxID_STATIC, _("Node label")),
-		  0, wxALL | wxCENTER, 5);
-  m_nodeName = new wxTextCtrl(this, wxID_ANY, 
-			      wxString(m_node->GetLabel().c_str(), *wxConvCurrent));
-  labelSizer->Add(m_nodeName, 1, wxALL | wxCENTER | wxEXPAND, 5);
-  topSizer->Add(labelSizer, 0, wxALL | wxEXPAND, 5);
+  auto *topSizer = new wxBoxSizer(wxVERTICAL);
 
-  wxBoxSizer *infosetSizer = new wxBoxSizer(wxHORIZONTAL);
-  infosetSizer->Add(new wxStaticText(this, wxID_STATIC, _("Information set")),
-		    0, wxALL | wxCENTER, 5);
+  auto *labelSizer = new wxBoxSizer(wxHORIZONTAL);
+  labelSizer->Add(new wxStaticText(this, wxID_STATIC, _("Node label")), 0, wxALL | wxCENTER, S);
+  m_nodeLabel = new LabelTextCtrl(this, wxID_ANY, wxString::FromUTF8(m_node->GetLabel()));
+  labelSizer->Add(m_nodeLabel, 1, wxALL | wxCENTER | wxEXPAND, S);
+  topSizer->Add(labelSizer, 0, wxALL | wxEXPAND, S);
+
+  const bool isChance = !p_node->IsTerminal() && p_node->GetInfoset()->IsChanceInfoset();
+  auto *infosetSizer = new wxBoxSizer(wxHORIZONTAL);
+  infosetSizer->Add(new wxStaticText(this, wxID_STATIC, isChance ? _("Event") : _("Infoset")), 0,
+                    wxALL | wxCENTER, S);
   m_infoset = new wxChoice(this, wxID_ANY);
-  if (p_node->NumChildren() > 0) {
-    m_infoset->Append(_("New information set"));
-    if (p_node->GetInfoset()->IsChanceInfoset()) {
+  if (!p_node->IsTerminal()) {
+    m_infoset->Append(isChance ? _("New event") : _("New infoset"));
+    if (isChance) {
       int selection = 0;
-      for (int iset = 1; iset <= p_node->GetGame()->GetChance()->NumInfosets();
-	   iset++) {
-	Gambit::GameInfoset infoset = p_node->GetGame()->GetChance()->GetInfoset(iset);
-	if (infoset->NumActions() == p_node->NumChildren()) {
-	  m_infosetList.Append(infoset);
-	  m_infoset->Append(wxString::Format(_("Chance infoset %d"),
-					     infoset->GetNumber()));
-	  if (infoset == p_node->GetInfoset()) {
-	    selection = m_infosetList.Length();
-	  }
-	}
+      for (const auto &infoset : p_node->GetGame()->GetChance()->GetInfosets()) {
+        if (infoset->GetActions().size() == p_node->GetChildren().size()) {
+          m_infosetList.push_back(infoset);
+          wxString label;
+          label << _("Event ") << infoset->GetNumber();
+          m_infoset->Append(label);
+          if (infoset == p_node->GetInfoset()) {
+            selection = m_infosetList.size();
+          }
+        }
       }
       m_infoset->SetSelection(selection);
     }
     else {
       int selection = 0;
-      for (int pl = 1; pl <= p_node->GetGame()->NumPlayers(); pl++) {
-	Gambit::GamePlayer player = p_node->GetGame()->GetPlayer(pl);
-	for (int iset = 1; iset <= player->NumInfosets(); iset++) {
-	  Gambit::GameInfoset infoset = player->GetInfoset(iset);
-	  if (infoset->NumActions() == p_node->NumChildren()) {
-	    m_infosetList.Append(infoset);
-	    m_infoset->Append(wxString::Format(_("Player %d, Infoset %d"),
-					       pl, iset));
-	    if (infoset == p_node->GetInfoset()) {
-	      selection = m_infosetList.Length();
-	    }
-	  }
-	}
+      for (const auto &player : p_node->GetGame()->GetPlayers()) {
+        for (const auto &infoset : player->GetInfosets()) {
+          if (infoset->GetActions().size() == p_node->GetChildren().size()) {
+            m_infosetList.push_back(infoset);
+            wxString label;
+            label << _("Player ") << player->GetNumber() << _(", Infoset ")
+                  << infoset->GetNumber();
+            m_infoset->Append(label);
+            if (infoset == p_node->GetInfoset()) {
+              selection = m_infosetList.size();
+            }
+          }
+        }
       }
       m_infoset->SetSelection(selection);
     }
@@ -91,81 +95,93 @@ dialogEditNode::dialogEditNode(wxWindow *p_parent, Gambit::GameNode p_node)
     m_infoset->SetSelection(0);
     m_infoset->Enable(false);
   }
-  infosetSizer->Add(m_infoset, 1, wxALL | wxEXPAND, 5);
-  topSizer->Add(infosetSizer, 0, wxALL | wxEXPAND, 5);
+  infosetSizer->Add(m_infoset, 1, wxALL | wxEXPAND, S);
+  topSizer->Add(infosetSizer, 0, wxALL | wxEXPAND, S);
 
-  wxBoxSizer *subgameSizer = new wxBoxSizer(wxVERTICAL);
+  auto *subgameSizer = new wxBoxSizer(wxVERTICAL);
   if (!p_node->GetParent()) {
-    subgameSizer->Add(new wxStaticText(this, wxID_STATIC,
-				       _("This is the root node of the tree")),
-		      0, wxALL | wxCENTER, 5);
+    subgameSizer->Add(new wxStaticText(this, wxID_STATIC, _("This is the root node of the tree")),
+                      0, wxALL | wxCENTER, S);
   }
   else if (p_node->IsSubgameRoot()) {
-    subgameSizer->Add(new wxStaticText(this, wxID_STATIC,
-				       _("This is the root of a proper subgame")),
-		      0, wxALL | wxCENTER, 5);
+    subgameSizer->Add(
+        new wxStaticText(this, wxID_STATIC, _("This is the root of a proper subgame")), 0,
+        wxALL | wxCENTER, S);
   }
-  topSizer->Add(subgameSizer, 0, wxALL | wxCENTER, 5);
+  topSizer->Add(subgameSizer, 0, wxALL | wxCENTER, S);
 
-  wxBoxSizer *outcomeSizer = new wxBoxSizer(wxHORIZONTAL);
-  outcomeSizer->Add(new wxStaticText(this, wxID_STATIC, _("Outcome")),
-		    0, wxALL | wxCENTER, 5);
+  auto *outcomeSizer = new wxBoxSizer(wxHORIZONTAL);
+  outcomeSizer->Add(new wxStaticText(this, wxID_STATIC, _("Outcome")), 0, wxALL | wxCENTER, S);
   m_outcome = new wxChoice(this, wxID_ANY);
   m_outcome->Append(_("(null)"));
   m_outcome->SetSelection(0);
-  Gambit::Game efg = p_node->GetGame();
-  for (int outc = 1; outc <= efg->NumOutcomes(); outc++) {
-    Gambit::GameOutcome outcome = efg->GetOutcome(outc);
-    std::string item = Gambit::lexical_cast<std::string>(outc) + ": " + outcome->GetLabel();
-    if (item == "") {
-      item = "Outcome" + Gambit::lexical_cast<std::string>(outc);
+  const Game efg = p_node->GetGame();
+  for (const auto &outcome : efg->GetOutcomes()) {
+    std::string item =
+        lexical_cast<std::string>(outcome->GetNumber()) + ": " + outcome->GetLabel();
+    if (item.empty()) {
+      item = "Outcome" + lexical_cast<std::string>(outcome->GetNumber());
     }
 
-    item += (" (" + 
-	     Gambit::lexical_cast<std::string>(outcome->GetPayoff<std::string>(1)) + ", " +
-	     Gambit::lexical_cast<std::string>(outcome->GetPayoff<std::string>(2)));
+    item += (" (" + outcome->GetPayoff<std::string>(efg->GetPlayer(1)) + ", " +
+             outcome->GetPayoff<std::string>(efg->GetPlayer(2)));
     if (efg->NumPlayers() > 2) {
-      item += ", " + Gambit::lexical_cast<std::string>(outcome->GetPayoff<std::string>(3));
+      item += ", " + outcome->GetPayoff<std::string>(efg->GetPlayer(3));
       if (efg->NumPlayers() > 3) {
-	item += ",...)";
+        item += ",...)";
       }
       else {
-	item += ")";
+        item += ")";
       }
     }
     else {
       item += ")";
     }
 
-    m_outcome->Append(wxString(item.c_str(), *wxConvCurrent));
+    m_outcome->Append(wxString::FromUTF8(item));
     if (m_node->GetOutcome() == outcome) {
-      m_outcome->SetSelection(outc);
+      m_outcome->SetSelection(outcome->GetNumber());
     }
   }
-  outcomeSizer->Add(m_outcome, 1, wxALL | wxEXPAND, 5);
-  topSizer->Add(outcomeSizer, 0, wxALL | wxEXPAND, 5);
+  outcomeSizer->Add(m_outcome, 1, wxALL | wxEXPAND, S);
+  topSizer->Add(outcomeSizer, 0, wxALL | wxEXPAND, S);
 
-  wxBoxSizer *buttonSizer = new wxBoxSizer(wxHORIZONTAL);
-  buttonSizer->Add(new wxButton(this, wxID_CANCEL, _("Cancel")), 0, wxALL, 5);
-  wxButton *okButton = new wxButton(this, wxID_OK, _("OK"));
-  okButton->SetDefault();
-  buttonSizer->Add(okButton, 0, wxALL, 5);
-  topSizer->Add(buttonSizer, 0, wxALL | wxALIGN_RIGHT, 5);
+  if (auto *buttonSizer = CreateStdDialogButtonSizer(wxOK | wxCANCEL)) {
+    topSizer->Add(buttonSizer, 0, wxALL | wxEXPAND, S);
+  }
 
   SetSizer(topSizer);
   topSizer->Fit(this);
   topSizer->SetSizeHints(this);
 
-  Layout();
+  wxTopLevelWindowBase::Layout();
   CenterOnParent();
+
+  Bind(wxEVT_BUTTON, &EditNodeDialog::OnOK, this, wxID_OK);
 }
 
-Gambit::GameInfoset dialogEditNode::GetInfoset(void) const
+void EditNodeDialog::OnOK(wxCommandEvent &p_event)
+{
+  const wxString nodeLabel = m_nodeLabel->GetNormalizedValue();
+  if (!nodeLabel.empty()) {
+    for (const auto &node : m_node->GetGame()->GetNodes()) {
+      if (node != m_node && node->GetLabel() == nodeLabel) {
+        wxRichMessageDialog(this, _("Node label must be unique in the game."), _("Error"),
+                            wxOK | wxCENTRE | wxICON_ERROR)
+            .ShowModal();
+        m_nodeLabel->SetFocus();
+        return;
+      }
+    }
+  }
+  p_event.Skip();
+}
+
+GameInfoset EditNodeDialog::GetInfoset() const
 {
   if (m_infoset->GetSelection() == 0) {
-    return 0;
+    return nullptr;
   }
-  else {
-    return m_infosetList[m_infoset->GetSelection()];
-  }
+  return m_infosetList[m_infoset->GetSelection()];
 }
+} // namespace Gambit::GUI
